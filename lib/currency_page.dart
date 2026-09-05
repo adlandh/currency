@@ -28,8 +28,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
   List<CurrencyInfo> _currencies = const [];
   List<String> _targets = const [];
   String? _base;
-  String? _from;
-  String? _to;
 
   bool _catalogLoading = true;
   String? _catalogError;
@@ -38,16 +36,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
   bool _tableLoading = false;
   String? _tableError;
   bool _tableRefreshWarning = false;
-  ExchangeRate? _conversionRate;
-  bool _conversionLoading = false;
-  String? _conversionError;
-  bool _conversionRefreshWarning = false;
   RateTablePreferences? _savedPreferences;
   String? _preferencesNotice;
 
   int _catalogRequest = 0;
   int _tableRequest = 0;
-  int _conversionRequest = 0;
   int _addMenuVersion = 0;
 
   @override
@@ -65,7 +58,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
   void dispose() {
     _catalogRequest++;
     _tableRequest++;
-    _conversionRequest++;
     _amountController.dispose();
     super.dispose();
   }
@@ -85,8 +77,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
       final base = saved != null && codes.contains(saved.base)
           ? saved.base
           : _pick(codes, 'EUR');
-      final from = _pick(codes, 'EUR');
-      final to = _pick(codes, 'CZK', except: from);
       final targets = saved == null
           ? ['USD', 'CZK', 'GBP'].where(codes.contains).toList()
           : _availableUnique(saved.targets, codes);
@@ -94,17 +84,13 @@ class _CurrencyPageState extends State<CurrencyPage> {
         _currencies = currencies;
         _catalogLoading = false;
         _base = base;
-        _from = from;
-        _to = to;
         _targets = targets;
         _tableRates = const {};
         _missingTableRates = const {};
-        _conversionRate = null;
       });
       if (currencies.isNotEmpty) {
         _persistRateTablePreferences(clearNoticeOnSuccess: false);
         unawaited(_loadTableRates());
-        unawaited(_loadConversionRate());
       }
     } on ExchangeRatesException catch (error) {
       if (!mounted || request != _catalogRequest) return;
@@ -124,13 +110,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
     ];
   }
 
-  String? _pick(Set<String> codes, String preferred, {String? except}) {
-    if (codes.contains(preferred) && preferred != except) return preferred;
-    for (final code in codes) {
-      if (code != except) return code;
-    }
-    return except != null && codes.contains(except) ? except : null;
-  }
+  String? _pick(Set<String> codes, String preferred) =>
+      codes.contains(preferred) ? preferred : codes.firstOrNull;
 
   Future<void> _loadTableRates({bool refresh = false}) async {
     final base = _base;
@@ -194,63 +175,12 @@ class _CurrencyPageState extends State<CurrencyPage> {
       Iterable.generate(left.length)
           .every((index) => left[index] == right[index]);
 
-  Future<void> _loadConversionRate({bool refresh = false}) async {
-    final from = _from;
-    final to = _to;
-    final request = ++_conversionRequest;
-    if (from == null || to == null) return;
-    if (from == to) {
-      setState(() {
-        _conversionLoading = false;
-        _conversionRate = null;
-        _conversionError = null;
-        _conversionRefreshWarning = false;
-      });
-      return;
-    }
-
-    setState(() {
-      _conversionLoading = true;
-      _conversionError = null;
-      _conversionRefreshWarning = false;
-      if (!refresh) _conversionRate = null;
-    });
-
-    try {
-      final rates = await widget.api.fetchRates(from, [to]);
-      if (!_conversionRequestIsCurrent(request, from, to)) return;
-      final rate = rates[to];
-      setState(() {
-        _conversionLoading = false;
-        _conversionRate = rate;
-        if (rate == null) _conversionError = 'Курс недоступен.';
-      });
-    } on ExchangeRatesException catch (error) {
-      if (!_conversionRequestIsCurrent(request, from, to)) return;
-      setState(() {
-        _conversionLoading = false;
-        if (refresh && _conversionRate != null) {
-          _conversionRefreshWarning = true;
-        } else {
-          _conversionRate = null;
-          _conversionError = error.message;
-        }
-      });
-    }
-  }
-
-  bool _conversionRequestIsCurrent(int request, String from, String to) =>
-      mounted && request == _conversionRequest && from == _from && to == _to;
-
   Future<void> _refreshAll() async {
     if (_catalogError != null || _currencies.isEmpty) {
       await _loadCurrencies();
       return;
     }
-    await Future.wait([
-      _loadTableRates(refresh: true),
-      _loadConversionRate(refresh: true),
-    ]);
+    await _loadTableRates(refresh: true);
   }
 
   void _changeBase(String? value) {
@@ -258,28 +188,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
     setState(() => _base = value);
     _persistRateTablePreferences();
     unawaited(_loadTableRates());
-  }
-
-  void _changeFrom(String? value) {
-    if (value == null || value == _from) return;
-    setState(() => _from = value);
-    unawaited(_loadConversionRate());
-  }
-
-  void _changeTo(String? value) {
-    if (value == null || value == _to) return;
-    setState(() => _to = value);
-    unawaited(_loadConversionRate());
-  }
-
-  void _swapCurrencies() {
-    if (_from == null || _to == null || _from == _to) return;
-    setState(() {
-      final previousFrom = _from;
-      _from = _to;
-      _to = previousFrom;
-    });
-    unawaited(_loadConversionRate());
   }
 
   void _addTarget(String? value) {
@@ -377,11 +285,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
                         message: 'Источник не вернул доступные валюты.',
                         onRetry: _loadCurrencies,
                       )
-                    else ...[
-                      _buildConverter(context),
-                      const SizedBox(height: 56),
+                    else
                       _buildRates(context),
-                    ],
                   ],
                 ),
               ),
@@ -426,61 +331,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
     );
   }
 
-  Widget _buildConverter(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD5DFDA)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A153D31),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-          BoxShadow(
-            color: Color(0x0A153D31),
-            blurRadius: 3,
-            offset: Offset(0, 1),
-          ),
-        ],
-      ),
-      padding: const EdgeInsets.all(28),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final form = _buildConversionForm(context);
-          final result = _buildConversionResult(context);
-          if (constraints.maxWidth < 720) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [form, const SizedBox(height: 28), result],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(flex: 5, child: form),
-              const SizedBox(width: 64),
-              Expanded(flex: 4, child: result),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _buildConversionForm(BuildContext context) {
+  Widget _buildRates(BuildContext context) {
     final amount = parseAmount(_amountController.text);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('Конвертер', style: Theme.of(context).textTheme.headlineSmall),
-        const SizedBox(height: 8),
-        Text(
-          'Введите сумму и выберите направление.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-        const SizedBox(height: 24),
         TextField(
           key: const Key('amount-field'),
           controller: _amountController,
@@ -493,231 +348,95 @@ class _CurrencyPageState extends State<CurrencyPage> {
           decoration: InputDecoration(
             labelText: 'Сумма',
             hintText: 'Например, 3 000,50',
+            helperText: amount.status == AmountStatus.empty
+                ? 'Введите сумму'
+                : null,
             errorText: amount.status == AmountStatus.invalid
                 ? amount.error
                 : null,
+            errorMaxLines: 3,
           ),
           onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 16),
-        Row(
-          children: [
-            Expanded(
-              child: Column(
-                children: [
-                  CurrencyMenu(
-                    key: ValueKey('from-${_currencies.length}'),
-                    fieldKey: const Key('from-menu'),
-                    label: 'Из валюты',
-                    currencies: _currencies,
-                    selectedCode: _from,
-                    clearSelectionOnOpen: true,
-                    onSelected: _changeFrom,
-                  ),
-                  const SizedBox(height: 16),
-                  CurrencyMenu(
-                    key: ValueKey('to-${_currencies.length}'),
-                    fieldKey: const Key('to-menu'),
-                    label: 'В валюту',
-                    currencies: _currencies,
-                    selectedCode: _to,
-                    clearSelectionOnOpen: true,
-                    onSelected: _changeTo,
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(width: 8),
-            IconButton(
-              key: const Key('swap-currencies-button'),
-              tooltip: 'Поменять валюты местами',
-              onPressed: _from != null && _to != null && _from != _to
-                  ? _swapCurrencies
-                  : null,
-              icon: const Icon(Icons.swap_horiz_rounded),
-            ),
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildConversionResult(BuildContext context) {
-    final amount = parseAmount(_amountController.text);
-    final sameCurrency = _from != null && _from == _to;
-    final rate = sameCurrency ? 1.0 : _conversionRate?.rate;
-    String? result;
-    if (amount.status == AmountStatus.valid && rate != null && _to != null) {
-      try {
-        result = formatMoney(convertAmount(amount.value!, rate), _to!);
-      } on FormatException {
-        result = null;
-      }
-    }
-
-    String status;
-    if (amount.status == AmountStatus.empty) {
-      status = 'Введите сумму';
-    } else if (amount.status == AmountStatus.invalid) {
-      status = 'Исправьте сумму';
-    } else if (_conversionLoading && rate == null) {
-      status = 'Получаем курс…';
-    } else if (_conversionError != null && rate == null) {
-      status = _conversionError!;
-    } else {
-      status = result ?? 'Не удалось рассчитать сумму.';
-    }
-
-    final rateLine = rate == null || _from == null || _to == null
-        ? null
-        : '1 $_from = ${formatRate(rate)} $_to';
-    final dateLine = sameCurrency || _conversionRate == null
-        ? null
-        : 'Курс за ${DateFormat.yMMMMd('ru_RU').format(_conversionRate!.date)}';
-
-    final semanticsLabel = [
-      'Результат конвертации: $status',
-      rateLine,
-      dateLine,
-      if (_conversionRefreshWarning)
-        'Не удалось обновить. Показан предыдущий курс.',
-    ].whereType<String>().join('. ');
-
-    return Semantics(
-      key: const Key('conversion-semantics'),
-      liveRegion: true,
-      label: semanticsLabel,
-      child: ExcludeSemantics(
-        child: Container(
-          decoration: BoxDecoration(
-            color: const Color(0xFFE9F2ED),
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(color: const Color(0xFFB8CDC3)),
-          ),
-          padding: const EdgeInsets.all(24),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Получится', style: Theme.of(context).textTheme.bodyMedium),
-              const SizedBox(height: 8),
-              SelectableText(
-                status,
-                key: const Key('conversion-result'),
-                style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                  fontSize: result == null ? 22 : 30,
-                  fontFeatures: const [FontFeature.tabularFigures()],
-                ),
-              ),
-              if (rateLine != null) ...[
-                const SizedBox(height: 14),
-                Text(rateLine, key: const Key('conversion-rate')),
-              ],
-              if (dateLine != null) ...[
-                const SizedBox(height: 4),
-                Text(dateLine, style: Theme.of(context).textTheme.bodyMedium),
-              ],
-              if (_conversionRefreshWarning) ...[
-                const SizedBox(height: 12),
-                const _InlineNotice(
-                  icon: Icons.info_outline_rounded,
-                  text: 'Не удалось обновить. Показан предыдущий курс.',
-                ),
-              ],
-              if (_conversionError != null && rate == null) ...[
-                const SizedBox(height: 8),
-                TextButton(
-                  key: const Key('retry-conversion'),
-                  onPressed: _loadConversionRate,
-                  child: const Text('Повторить'),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRates(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        Text(
-          'Курсы относительно',
-          style: Theme.of(context).textTheme.headlineSmall,
-        ),
-        const SizedBox(height: 8),
-        Text(
-          'Выберите базу и валюты, которые хотите сравнить.',
-          style: Theme.of(context).textTheme.bodyMedium,
+        CurrencyMenu(
+          key: ValueKey('base-${_currencies.length}'),
+          fieldKey: const Key('base-menu'),
+          label: 'Базовая валюта',
+          currencies: _currencies,
+          selectedCode: _base,
+          clearSelectionOnOpen: true,
+          onSelected: _changeBase,
         ),
         const SizedBox(height: 24),
-        LayoutBuilder(
-          builder: (context, constraints) {
-            final menuWidth = constraints.maxWidth < 600
-                ? constraints.maxWidth
-                : (constraints.maxWidth - 16) / 2;
-            return Wrap(
-              spacing: 16,
-              runSpacing: 16,
-              children: [
-                SizedBox(
-                  width: menuWidth,
-                  child: CurrencyMenu(
-                    key: ValueKey('base-$_base-${_currencies.length}'),
-                    fieldKey: const Key('base-menu'),
-                    label: 'Базовая валюта',
-                    currencies: _currencies,
-                    selectedCode: _base,
-                    onSelected: _changeBase,
-                  ),
-                ),
-                SizedBox(
-                  width: menuWidth,
-                  child: CurrencyMenu(
-                    key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
-                    fieldKey: const Key('add-target-menu'),
-                    label: 'Добавить валюту',
-                    currencies: _currencies,
-                    disabledCodes: _targets.toSet(),
-                    onSelected: _addTarget,
-                  ),
-                ),
-              ],
-            );
-          },
-        ),
-        const SizedBox(height: 24),
-        if (_tableError != null)
-          _FailureBanner(message: _tableError!, onRetry: _loadTableRates)
-        else if (_targets.isEmpty)
+        if (_tableError != null) ...[
+          _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
+          const SizedBox(height: 16),
+        ],
+        if (_targets.isEmpty)
           const _EmptyRates()
         else
-          Container(
-            decoration: BoxDecoration(
-              color: Theme.of(context).colorScheme.surface,
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: const Color(0xFFD5DFDA)),
-            ),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                for (var index = 0; index < _targets.length; index++) ...[
-                  RateRow(
-                    key: Key('rate-row-${_targets[index]}'),
-                    currency: _currency(_targets[index])!,
-                    base: _base!,
-                    rate: _tableRates[_targets[index]],
-                    identity: _targets[index] == _base,
-                    missing: _missingTableRates.contains(_targets[index]),
-                    loading: _tableLoading,
-                    onRemove: () => _removeTarget(_targets[index]),
-                  ),
-                  if (index != _targets.length - 1)
-                    const Divider(height: 1, indent: 20, endIndent: 20),
-                ],
-              ],
+          Semantics(
+            key: const Key('conversion-semantics'),
+            liveRegion: true,
+            container: true,
+            explicitChildNodes: true,
+            child: Container(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surface,
+                borderRadius: BorderRadius.circular(10),
+                border: Border.all(color: const Color(0xFFD5DFDA)),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact =
+                      constraints.maxWidth < 760 ||
+                      MediaQuery.textScalerOf(context).scale(17) > 25;
+                  return Column(
+                    children: [
+                      if (!compact) ...[
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
+                          child: Row(
+                            children: [
+                              Expanded(flex: 3, child: Text('Валюта')),
+                              SizedBox(width: 20),
+                              Expanded(flex: 4, child: Text('Курс')),
+                              SizedBox(width: 20),
+                              Expanded(
+                                flex: 3,
+                                child: Text(
+                                  'Получится',
+                                  textAlign: TextAlign.right,
+                                ),
+                              ),
+                              SizedBox(width: 56),
+                            ],
+                          ),
+                        ),
+                        const Divider(height: 1),
+                      ],
+                      for (var index = 0; index < _targets.length; index++) ...[
+                        RateRow(
+                          key: Key('rate-row-${_targets[index]}'),
+                          currency: _currency(_targets[index])!,
+                          base: _base!,
+                          rate: _tableRates[_targets[index]],
+                          identity: _targets[index] == _base,
+                          missing: _missingTableRates.contains(_targets[index]),
+                          loading: _tableLoading,
+                          amount: amount,
+                          compact: compact,
+                          onRemove: () => _removeTarget(_targets[index]),
+                        ),
+                        if (index != _targets.length - 1)
+                          const Divider(height: 1, indent: 20, endIndent: 20),
+                      ],
+                    ],
+                  );
+                },
+              ),
             ),
           ),
         if (_tableRefreshWarning) ...[
@@ -726,6 +445,19 @@ class _CurrencyPageState extends State<CurrencyPage> {
             icon: Icons.info_outline_rounded,
             text: 'Не удалось обновить. Показаны предыдущие курсы.',
           ),
+        ],
+        const SizedBox(height: 24),
+        CurrencyMenu(
+          key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
+          fieldKey: const Key('add-target-menu'),
+          label: 'Добавить валюту',
+          currencies: _currencies,
+          disabledCodes: _targets.toSet(),
+          onSelected: _addTarget,
+        ),
+        if (_targets.length == _currencies.length) ...[
+          const SizedBox(height: 8),
+          const Text('Все валюты уже добавлены.'),
         ],
         const SizedBox(height: 18),
         Text(
@@ -835,12 +567,13 @@ class _CurrencyMenuState extends State<CurrencyMenu> {
       return KeyEventResult.ignored;
     }
     if (event.logicalKey == LogicalKeyboardKey.escape &&
-        _menuController.isOpen) {
+        (_menuController.isOpen || _searching)) {
       _menuController.close();
       _restoreSelection();
       return KeyEventResult.handled;
     }
-    if (event.logicalKey == LogicalKeyboardKey.tab && _menuController.isOpen) {
+    if (event.logicalKey == LogicalKeyboardKey.tab &&
+        (_menuController.isOpen || _searching)) {
       _menuController.close();
       _restoreSelection();
       return KeyEventResult.ignored;
@@ -851,41 +584,44 @@ class _CurrencyMenuState extends State<CurrencyMenu> {
 
   @override
   Widget build(BuildContext context) {
-    return TapRegion(
-      onTapOutside: (_) => _restoreAfterMenuCloses(),
-      child: Listener(
-        onPointerDown: (_) {
-          if (_menuController.isOpen) {
-            _restoreAfterMenuCloses();
-          } else {
-            _startSearch();
-          }
-        },
-        child: LayoutBuilder(
-          builder: (context, constraints) => DropdownMenu<String>(
-            key: widget.fieldKey,
-            width: constraints.maxWidth,
-            label: Text(widget.label),
-            controller: _textController,
-            focusNode: _focusNode,
-            menuController: _menuController,
-            initialSelection: widget.selectedCode,
-            enableFilter: true,
-            enableSearch: true,
-            requestFocusOnTap: true,
-            menuHeight: 360,
-            leadingIcon: const Icon(Icons.search_rounded, size: 20),
-            inputDecorationTheme: Theme.of(context).inputDecorationTheme,
-            dropdownMenuEntries: widget.currencies
-                .map(
-                  (currency) => DropdownMenuEntry(
-                    value: currency.code,
-                    label: currency.label,
-                    enabled: !widget.disabledCodes.contains(currency.code),
-                  ),
-                )
-                .toList(),
-            onSelected: _select,
+    return FocusTraversalGroup(
+      policy: WidgetOrderTraversalPolicy(),
+      child: TapRegion(
+        onTapOutside: (_) => _restoreAfterMenuCloses(),
+        child: Listener(
+          onPointerDown: (_) {
+            if (_menuController.isOpen) {
+              _restoreAfterMenuCloses();
+            } else {
+              _startSearch();
+            }
+          },
+          child: LayoutBuilder(
+            builder: (context, constraints) => DropdownMenu<String>(
+              key: widget.fieldKey,
+              width: constraints.maxWidth,
+              label: Text(widget.label),
+              controller: _textController,
+              focusNode: _focusNode,
+              menuController: _menuController,
+              initialSelection: widget.selectedCode,
+              enableFilter: true,
+              enableSearch: true,
+              requestFocusOnTap: true,
+              menuHeight: 360,
+              leadingIcon: const Icon(Icons.search_rounded, size: 20),
+              inputDecorationTheme: Theme.of(context).inputDecorationTheme,
+              dropdownMenuEntries: widget.currencies
+                  .map(
+                    (currency) => DropdownMenuEntry(
+                      value: currency.code,
+                      label: currency.label,
+                      enabled: !widget.disabledCodes.contains(currency.code),
+                    ),
+                  )
+                  .toList(),
+              onSelected: _select,
+            ),
           ),
         ),
       ),
@@ -902,6 +638,8 @@ class RateRow extends StatefulWidget {
     required this.identity,
     required this.missing,
     required this.loading,
+    required this.amount,
+    required this.compact,
     required this.onRemove,
   });
 
@@ -911,6 +649,8 @@ class RateRow extends StatefulWidget {
   final bool identity;
   final bool missing;
   final bool loading;
+  final AmountParseResult amount;
+  final bool compact;
   final VoidCallback onRemove;
 
   @override
@@ -963,8 +703,6 @@ class _RateRowState extends State<RateRow> {
                 const SizedBox(height: 2),
                 Text(
                   widget.currency.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.bodyMedium,
                 ),
               ],
@@ -975,7 +713,7 @@ class _RateRowState extends State<RateRow> {
               tooltip: 'Удалить ${widget.currency.code}',
               icon: const Icon(Icons.close_rounded, size: 20),
             );
-            if (constraints.maxWidth < 600) {
+            if (widget.compact) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -987,7 +725,11 @@ class _RateRowState extends State<RateRow> {
                     ],
                   ),
                   const SizedBox(height: 14),
+                  const Text('Курс'),
                   details,
+                  const SizedBox(height: 14),
+                  const Text('Получится'),
+                  _result(context),
                 ],
               );
             }
@@ -996,6 +738,8 @@ class _RateRowState extends State<RateRow> {
                 Expanded(flex: 3, child: name),
                 const SizedBox(width: 20),
                 Expanded(flex: 4, child: details),
+                const SizedBox(width: 20),
+                Expanded(flex: 3, child: _result(context)),
                 const SizedBox(width: 8),
                 remove,
               ],
@@ -1003,6 +747,38 @@ class _RateRowState extends State<RateRow> {
           },
         ),
       ),
+    );
+  }
+
+  Widget _result(BuildContext context) {
+    final rate = widget.identity ? 1.0 : widget.rate?.rate;
+    String result;
+    if (widget.amount.status == AmountStatus.empty) {
+      result = 'Введите сумму';
+    } else if (widget.amount.status == AmountStatus.invalid) {
+      result = 'Исправьте сумму';
+    } else if (rate == null) {
+      result = widget.loading && !widget.missing
+          ? 'Загрузка курса…'
+          : 'Курс недоступен';
+    } else {
+      try {
+        result = formatMoney(
+          convertAmount(widget.amount.value!, rate),
+          widget.currency.code,
+        );
+      } on FormatException {
+        result = 'Не удалось рассчитать сумму.';
+      }
+    }
+    return Text(
+      result.replaceAll('\u00a0', ' '),
+      key: Key('conversion-result-${widget.currency.code}'),
+      semanticsLabel:
+          'Результат конвертации в ${widget.currency.code}: $result',
+      textAlign: widget.compact ? TextAlign.left : TextAlign.right,
+      style: Theme.of(context).textTheme.titleMedium
+          ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
     );
   }
 

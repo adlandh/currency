@@ -1,0 +1,17 @@
+version: '3'
+
+tasks:
+  serve:
+    desc: Запустить Flutter Web-сервер на http://localhost:8080
+    cmds:
+      - flutter run -d web-server
+
+  lint:
+    desc: Запустить статический анализ Dart
+    cmds:
+      - flutter analyze
+
+  test:
+    desc: Запустить тесты
+    cmds:
+      - flutter test

@@ -2,12 +2,22 @@ schema: spec-driven
 
 # Project context (optional)
 # This is shown to AI when creating artifacts.
-# Add your tech stack, conventions, style guides, domain knowledge, etc.
-# Example:
-#   context: |
-#     Tech stack: TypeScript, React, Node.js
-#     We use conventional commits
-#     Domain: e-commerce platform
+context: |
+  Язык: все артефакты и спеки пишутся ТОЛЬКО на русском языке.
+  Заголовки, описания, требования (Requirement), сценарии (Scenario), задачи,
+  комментарии в спеках — всё на русском. Технические идентификаторы
+  (имена файлов, код, пути, название change) остаются на английском.
+  Tech stack: Flutter (Dart), web
+
+rules:
+  proposal:
+    - Весь текст proposal.md — только на русском языке
+  design:
+    - Весь текст design.md — только на русском языке
+  tasks:
+    - Весь текст tasks.md — только на русском языке
+  spec:
+    - ADRs, Requirements и Scenarios в дельта-спеках — только на русском языке
 
 # Per-artifact rules (optional)
 # Add custom rules for specific artifacts.

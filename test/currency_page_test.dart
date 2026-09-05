@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:ui' show Tristate;
 
 import 'package:currency/currency_page.dart';
 import 'package:currency/exchange_rates.dart';
@@ -12,6 +13,309 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  testWidgets('обмен обновляет поля без пересоздания большого каталога', (
+    tester,
+  ) async {
+    final reverse = Completer<http.Response>();
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) {
+        return http.Response(
+          jsonEncode([
+            ...jsonDecode(_catalog().body) as List<dynamic>,
+            for (var i = 0; i < 180; i++)
+              {
+                'iso_code':
+                    'X${String.fromCharCode(65 + i ~/ 26)}${String.fromCharCode(65 + i % 26)}',
+                'name': 'Additional currency $i',
+              },
+          ]),
+          200,
+        );
+      }
+      if (request.url.queryParameters['base'] == 'CZK') return reverse.future;
+      return _rates(request);
+    });
+    final from = find.byKey(const Key('from-menu'));
+    final to = find.byKey(const Key('to-menu'));
+    final fromState = tester.state(from);
+    final toState = tester.state(to);
+    await tester.tap(find.byKey(const Key('swap-currencies-button')));
+    await tester.pump();
+    final fromAfterSwap = tester.state(from);
+    final toAfterSwap = tester.state(to);
+    expect(_menuText(tester, const Key('from-menu')), 'CZK · Czech Koruna');
+    expect(_menuText(tester, const Key('to-menu')), 'EUR · Euro');
+    expect(_text(tester, const Key('conversion-result')), 'Получаем курс…');
+    reverse.complete(_ratesFor('CZK', ['EUR']));
+    await tester.pumpAndSettle();
+    expect(fromAfterSwap, same(fromState));
+    expect(toAfterSwap, same(toState));
+  });
+
+  testWidgets('меняет валюты местами, сохраняя сумму и таблицу', (
+    tester,
+  ) async {
+    final store = _FakePreferencesStore();
+    final requests = <Uri>[];
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      requests.add(request.url);
+      return _rates(request);
+    }, preferencesStore: store);
+    final writes = store.writes;
+    final preferences = store.value;
+    final tableRows = tester.widgetList<RateRow>(find.byType(RateRow)).toList();
+    final amount = find.byKey(const Key('amount-field'));
+    await tester.enterText(amount, '3 000');
+    requests.clear();
+
+    final swap = find.byKey(const Key('swap-currencies-button'));
+    await tester.tap(swap);
+    await tester.pumpAndSettle();
+
+    expect(_menuText(tester, const Key('from-menu')), 'CZK · Czech Koruna');
+    expect(_menuText(tester, const Key('to-menu')), 'EUR · Euro');
+    expect(tester.widget<TextField>(amount).controller!.text, '3 000');
+    expect(_text(tester, const Key('conversion-result')), '120,00 EUR');
+    expect(_text(tester, const Key('conversion-rate')), '1 CZK = 0,040000 EUR');
+    expect(find.textContaining('Курс за'), findsOneWidget);
+    expect(requests.single.queryParameters, {'base': 'CZK', 'quotes': 'EUR'});
+    expect(store.writes, writes);
+    expect(store.value, same(preferences));
+    final updatedRows = tester
+        .widgetList<RateRow>(find.byType(RateRow))
+        .toList();
+    expect(
+      updatedRows.map((row) => row.currency.code),
+      tableRows.map((row) => row.currency.code),
+    );
+    expect(
+      updatedRows.map((row) => row.base),
+      tableRows.map((row) => row.base),
+    );
+    expect(
+      updatedRows.map((row) => row.rate),
+      tableRows.map((row) => row.rate),
+    );
+
+    // Swap from an unfinished search; the displayed labels must also update.
+    await tester.tap(find.byKey(const Key('from-menu')));
+    await tester.pumpAndSettle();
+    await tester.enterText(_menuField(const Key('from-menu')), 'JPY');
+    await tester.pumpAndSettle();
+    await tester.tap(swap);
+    await tester.pumpAndSettle();
+    expect(_menuText(tester, const Key('from-menu')), 'EUR · Euro');
+    expect(_menuText(tester, const Key('to-menu')), 'CZK · Czech Koruna');
+    expect(tester.widget<TextField>(amount).controller!.text, '3 000');
+    expect(_text(tester, const Key('conversion-result')), '75\u00a0000,00 CZK');
+    expect(requests.length, 2);
+    expect(store.writes, writes);
+  });
+
+  testWidgets(
+    'обмен сохраняет пустой и неверный ввод, одинаковая пара отключена',
+    (tester) async {
+      var calls = 0;
+      await _pump(tester, (request) async {
+        if (request.url.path.endsWith('/currencies')) return _catalog();
+        calls++;
+        return _rates(request);
+      });
+      final amount = find.byKey(const Key('amount-field'));
+      final swap = find.byKey(const Key('swap-currencies-button'));
+      for (final (input, result, from) in [
+        ('', 'Введите сумму', 'CZK · Czech Koruna'),
+        ('3,000.50', 'Исправьте сумму', 'EUR · Euro'),
+      ]) {
+        await tester.enterText(amount, input);
+        await tester.tap(swap);
+        await tester.pumpAndSettle();
+        expect(tester.widget<TextField>(amount).controller!.text, input);
+        expect(_text(tester, const Key('conversion-result')), result);
+        expect(_menuText(tester, const Key('from-menu')), from);
+      }
+      await tester.enterText(amount, '3000');
+      await _choose(tester, const Key('to-menu'), 'EUR · Euro');
+      await tester.pumpAndSettle();
+      final before = calls;
+      expect(tester.widget<IconButton>(swap).onPressed, isNull);
+      await tester.tap(swap);
+      await tester.pumpAndSettle();
+      expect(calls, before);
+      expect(
+        _text(tester, const Key('conversion-result')),
+        '3\u00a0000,00 EUR',
+      );
+    },
+  );
+
+  testWidgets('обмен во время загрузки игнорирует все прежние запросы', (
+    tester,
+  ) async {
+    final oldEur = Completer<http.Response>();
+    final oldCzk = Completer<http.Response>();
+    var eurCalls = 0;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      if (request.url.queryParameters['quotes'] == 'CZK') {
+        if (++eurCalls == 1) return oldEur.future;
+      }
+      if (request.url.queryParameters['base'] == 'CZK') return oldCzk.future;
+      return _rates(request);
+    }, settle: false);
+    await tester.pump();
+    await tester.pump();
+    final swap = find.byKey(const Key('swap-currencies-button'));
+    await tester.tap(swap);
+    await tester.pump();
+    expect(_menuText(tester, const Key('from-menu')), 'CZK · Czech Koruna');
+    expect(_text(tester, const Key('conversion-result')), 'Получаем курс…');
+    expect(find.byKey(const Key('conversion-rate')), findsNothing);
+    expect(find.textContaining('Курс за'), findsNothing);
+    expect(tester.widget<IconButton>(swap).onPressed, isNotNull);
+
+    await tester.tap(swap);
+    await tester.pumpAndSettle();
+    expect(_text(tester, const Key('conversion-result')), '25,00 CZK');
+    final semanticsBefore = tester
+        .widget<Semantics>(find.byKey(const Key('conversion-semantics')))
+        .properties
+        .label;
+    oldCzk.complete(_ratesFor('CZK', ['EUR'], rateOverride: 99));
+    await tester.pumpAndSettle();
+    oldEur.complete(
+      http.Response(
+        jsonEncode([
+          {'base': 'EUR', 'quote': 'CZK', 'rate': 99, 'date': '2026-09-01'},
+        ]),
+        200,
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(_text(tester, const Key('conversion-result')), '25,00 CZK');
+    expect(
+      tester
+          .widget<Semantics>(find.byKey(const Key('conversion-semantics')))
+          .properties
+          .label,
+      semanticsBefore,
+    );
+  });
+
+  testWidgets(
+    'ошибка обратного курса скрывает старые данные и допускает повтор',
+    (tester) async {
+      final reverse = Completer<http.Response>();
+      final reverseRequests = <Uri>[];
+      await _pump(tester, (request) async {
+        if (request.url.path.endsWith('/currencies')) return _catalog();
+        if (request.url.queryParameters['base'] == 'CZK') {
+          reverseRequests.add(request.url);
+          if (reverseRequests.length == 1) return reverse.future;
+          if (reverseRequests.length == 2) return http.Response('[]', 200);
+        }
+        return _rates(request);
+      });
+      final swap = find.byKey(const Key('swap-currencies-button'));
+      await tester.tap(swap);
+      await tester.pump();
+      expect(_text(tester, const Key('conversion-result')), 'Получаем курс…');
+      expect(find.byKey(const Key('conversion-rate')), findsNothing);
+      expect(find.textContaining('Курс за'), findsNothing);
+      reverse.complete(http.Response('unavailable', 503));
+      await tester.pumpAndSettle();
+      expect(_text(tester, const Key('conversion-result')), contains('503'));
+      expect(tester.widget<IconButton>(swap).onPressed, isNotNull);
+      for (final expected in ['Курс недоступен.', '0,04 EUR']) {
+        final retry = find.byKey(const Key('retry-conversion'));
+        await tester.ensureVisible(retry);
+        await tester.tap(retry);
+        await tester.pumpAndSettle();
+        expect(_text(tester, const Key('conversion-result')), expected);
+        if (expected == 'Курс недоступен.') {
+          expect(find.byKey(const Key('conversion-rate')), findsNothing);
+          expect(find.textContaining('Курс за'), findsNothing);
+          expect(tester.widget<IconButton>(swap).onPressed, isNotNull);
+        }
+      }
+      expect(reverseRequests.length, 3);
+      expect(
+        reverseRequests.every(
+          (url) =>
+              url.queryParameters['base'] == 'CZK' &&
+              url.queryParameters['quotes'] == 'EUR',
+        ),
+        isTrue,
+      );
+    },
+  );
+
+  testWidgets(
+    'обмен доступен с клавиатуры и объявляет результат без смены фокуса',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      await _pump(
+        tester,
+        (request) async => request.url.path.endsWith('/currencies')
+            ? _catalog()
+            : _rates(request),
+      );
+      final swap = find.byKey(const Key('swap-currencies-button'));
+      expect(
+        tester.widget<IconButton>(swap).tooltip,
+        'Поменять валюты местами',
+      );
+      for (var i = 0; i < 12; i++) {
+        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
+        await tester.pumpAndSettle();
+        if (tester
+                .getSemantics(swap)
+                .getSemanticsData()
+                .flagsCollection
+                .isFocused ==
+            Tristate.isTrue) {
+          break;
+        }
+      }
+      var data = tester.getSemantics(swap).getSemanticsData();
+      expect(data.tooltip, 'Поменять валюты местами');
+      expect(data.flagsCollection.isButton, isTrue);
+      expect(data.flagsCollection.isFocused, Tristate.isTrue);
+      final focus = FocusManager.instance.primaryFocus;
+      for (final (key, from) in [
+        (LogicalKeyboardKey.enter, 'CZK · Czech Koruna'),
+        (LogicalKeyboardKey.space, 'EUR · Euro'),
+      ]) {
+        await tester.sendKeyEvent(key);
+        await tester.pumpAndSettle();
+        expect(_menuText(tester, const Key('from-menu')), from);
+        expect(FocusManager.instance.primaryFocus, same(focus));
+        data = tester
+            .getSemantics(find.byKey(const Key('conversion-semantics')))
+            .getSemanticsData();
+        expect(data.flagsCollection.isLiveRegion, isTrue);
+        expect(
+          data.label,
+          contains(_text(tester, const Key('conversion-result'))),
+        );
+      }
+      semantics.dispose();
+    },
+  );
+
+  testWidgets('обмен недоступен без загруженного каталога', (tester) async {
+    final catalog = Completer<http.Response>();
+    await _pump(tester, (_) => catalog.future, settle: false);
+    await tester.pump();
+    expect(find.byKey(const Key('swap-currencies-button')), findsNothing);
+    catalog.complete(http.Response('unavailable', 503));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('swap-currencies-button')), findsNothing);
+    await _pump(tester, (_) async => http.Response('[]', 200));
+    expect(find.byKey(const Key('swap-currencies-button')), findsNothing);
+  });
+
   testWidgets(
     'показывает начальные курсы и пересчитывает сумму без нового запроса',
     (tester) async {
@@ -473,6 +777,34 @@ void main() {
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('amount-field')), findsOneWidget);
     expect(find.byKey(const Key('base-menu')), findsOneWidget);
+    final swap = find.byKey(const Key('swap-currencies-button'));
+    final fromRect = tester.getRect(find.byKey(const Key('from-menu')));
+    final toRect = tester.getRect(find.byKey(const Key('to-menu')));
+    final swapRect = tester.getRect(swap);
+    expect(swapRect.left, greaterThan(fromRect.right));
+    expect(swapRect.left, greaterThan(toRect.right));
+    expect(
+      swapRect.center.dy,
+      closeTo((fromRect.top + toRect.bottom) / 2, 0.1),
+    );
+    final size = tester.getSize(swap);
+    expect(size.width, greaterThanOrEqualTo(48));
+    expect(size.height, greaterThanOrEqualTo(48));
+    await tester.ensureVisible(swap);
+    await tester.tap(swap);
+    await tester.pumpAndSettle();
+    expect(_menuText(tester, const Key('from-menu')), 'CZK · Czech Koruna');
+    for (final key in [
+      'swap-currencies-button',
+      'amount-field',
+      'from-menu',
+      'to-menu',
+    ]) {
+      final rect = tester.getRect(find.byKey(Key(key)));
+      expect(rect.left, greaterThanOrEqualTo(0));
+      expect(rect.right, lessThanOrEqualTo(360));
+    }
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('результат объявлен как обновляемая семантическая область', (
@@ -532,7 +864,9 @@ void main() {
     await tester.tap(find.byKey(const Key('to-menu')));
     await tester.pumpAndSettle();
     await tester.enterText(_menuField(const Key('to-menu')), 'GBP');
-    await tester.tap(find.text('Получится'));
+    await tester.tapAt(
+      tester.getTopLeft(find.byKey(const Key('to-menu'))) - const Offset(20, 0),
+    );
     await tester.pumpAndSettle();
     expect(_menuText(tester, const Key('to-menu')), 'CZK · Czech Koruna');
 

@@ -272,6 +272,16 @@ class _CurrencyPageState extends State<CurrencyPage> {
     unawaited(_loadConversionRate());
   }
 
+  void _swapCurrencies() {
+    if (_from == null || _to == null || _from == _to) return;
+    setState(() {
+      final previousFrom = _from;
+      _from = _to;
+      _to = previousFrom;
+    });
+    unawaited(_loadConversionRate());
+  }
+
   void _addTarget(String? value) {
     if (value == null || _targets.contains(value)) return;
     setState(() {
@@ -438,7 +448,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
       padding: const EdgeInsets.all(28),
       child: LayoutBuilder(
         builder: (context, constraints) {
-          final form = _buildConversionForm(context, constraints.maxWidth);
+          final form = _buildConversionForm(context);
           final result = _buildConversionResult(context);
           if (constraints.maxWidth < 720) {
             return Column(
@@ -459,8 +469,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
     );
   }
 
-  Widget _buildConversionForm(BuildContext context, double width) {
-    final fieldWidth = width < 500 ? width : (width - 16) / 2;
+  Widget _buildConversionForm(BuildContext context) {
     final amount = parseAmount(_amountController.text);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -491,33 +500,41 @@ class _CurrencyPageState extends State<CurrencyPage> {
           onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 16),
-        Wrap(
-          spacing: 16,
-          runSpacing: 16,
+        Row(
           children: [
-            SizedBox(
-              width: fieldWidth,
-              child: CurrencyMenu(
-                key: ValueKey('from-$_from-${_currencies.length}'),
-                fieldKey: const Key('from-menu'),
-                label: 'Из валюты',
-                currencies: _currencies,
-                selectedCode: _from,
-                clearSelectionOnOpen: true,
-                onSelected: _changeFrom,
+            Expanded(
+              child: Column(
+                children: [
+                  CurrencyMenu(
+                    key: ValueKey('from-${_currencies.length}'),
+                    fieldKey: const Key('from-menu'),
+                    label: 'Из валюты',
+                    currencies: _currencies,
+                    selectedCode: _from,
+                    clearSelectionOnOpen: true,
+                    onSelected: _changeFrom,
+                  ),
+                  const SizedBox(height: 16),
+                  CurrencyMenu(
+                    key: ValueKey('to-${_currencies.length}'),
+                    fieldKey: const Key('to-menu'),
+                    label: 'В валюту',
+                    currencies: _currencies,
+                    selectedCode: _to,
+                    clearSelectionOnOpen: true,
+                    onSelected: _changeTo,
+                  ),
+                ],
               ),
             ),
-            SizedBox(
-              width: fieldWidth,
-              child: CurrencyMenu(
-                key: ValueKey('to-$_to-${_currencies.length}'),
-                fieldKey: const Key('to-menu'),
-                label: 'В валюту',
-                currencies: _currencies,
-                selectedCode: _to,
-                clearSelectionOnOpen: true,
-                onSelected: _changeTo,
-              ),
+            const SizedBox(width: 8),
+            IconButton(
+              key: const Key('swap-currencies-button'),
+              tooltip: 'Поменять валюты местами',
+              onPressed: _from != null && _to != null && _from != _to
+                  ? _swapCurrencies
+                  : null,
+              icon: const Icon(Icons.swap_horiz_rounded),
             ),
           ],
         ),
@@ -755,6 +772,15 @@ class _CurrencyMenuState extends State<CurrencyMenu> {
     super.initState();
     _focusNode = FocusNode(onKeyEvent: _handleKey);
     _focusNode.addListener(_restoreAfterFocusLoss);
+  }
+
+  @override
+  void didUpdateWidget(CurrencyMenu oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.selectedCode != widget.selectedCode) {
+      _searching = false;
+      _menuController.close();
+    }
   }
 
   @override

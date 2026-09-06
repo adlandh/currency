@@ -12,10 +12,14 @@ class CurrencyPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.preferencesStore,
+    required this.themeMode,
+    required this.onThemeChanged,
   });
 
   final ExchangeRatesApi api;
   final RateTablePreferencesStore preferencesStore;
+  final ThemeMode themeMode;
+  final ValueChanged<ThemeMode> onThemeChanged;
 
   @override
   State<CurrencyPage> createState() => _CurrencyPageState();
@@ -278,34 +282,32 @@ class _CurrencyPageState extends State<CurrencyPage> {
   }
 
   Widget _buildHeader(BuildContext context) {
+    final isDark = widget.themeMode == ThemeMode.dark;
     return Wrap(
-      spacing: 24,
-      runSpacing: 20,
-      alignment: WrapAlignment.spaceBetween,
+      spacing: 8,
+      runSpacing: 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 620),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                'Курсы валют',
-                style: Theme.of(context).textTheme.displaySmall,
-              ),
-              const SizedBox(height: 10),
-              Text(
-                'Сравнивайте ежедневные справочные курсы и пересчитывайте суммы.',
-                style: Theme.of(context).textTheme.bodyLarge,
-              ),
-            ],
-          ),
+        Text(
+          'Курсы валют',
+          style: Theme.of(context).textTheme.displaySmall,
         ),
-        OutlinedButton.icon(
+        IconButton(
           key: const Key('refresh-button'),
           onPressed: _refreshAll,
+          tooltip: 'Обновить',
           icon: const Icon(Icons.refresh_rounded, size: 20),
-          label: const Text('Обновить'),
+        ),
+        IconButton(
+          key: const Key('theme-toggle-button'),
+          onPressed: () => widget.onThemeChanged(
+            isDark ? ThemeMode.light : ThemeMode.dark,
+          ),
+          tooltip: isDark ? 'Светлая тема' : 'Тёмная тема',
+          icon: Icon(
+            isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
+            size: 22,
+          ),
         ),
       ],
     );
@@ -359,7 +361,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
               decoration: BoxDecoration(
                 color: Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFD5DFDA)),
+                border: Border.all(
+                  color: Theme.of(context).colorScheme.outlineVariant,
+                ),
               ),
               clipBehavior: Clip.antiAlias,
               child: LayoutBuilder(
@@ -542,7 +546,9 @@ class _RateRowState extends State<RateRow> {
         curve: Curves.easeOut,
         transform: Matrix4.translationValues(0, _hovered ? -1 : 0, 0),
         decoration: BoxDecoration(
-          color: _hovered ? const Color(0xFFF1F6F3) : Colors.transparent,
+          color: _hovered
+              ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06)
+              : Colors.transparent,
           boxShadow: _hovered
               ? const [
                   BoxShadow(
@@ -732,12 +738,13 @@ class _FailureBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return Semantics(
       liveRegion: true,
       child: Container(
         decoration: BoxDecoration(
-          color: const Color(0xFFFFF3F2),
-          border: Border.all(color: const Color(0xFFC97A7E)),
+          color: colorScheme.errorContainer,
+          border: Border.all(color: colorScheme.error),
           borderRadius: BorderRadius.circular(10),
         ),
         padding: const EdgeInsets.all(20),
@@ -746,7 +753,7 @@ class _FailureBanner extends StatelessWidget {
           runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            const Icon(Icons.error_outline_rounded, color: Color(0xFF8A272D)),
+            Icon(Icons.error_outline_rounded, color: colorScheme.onErrorContainer),
             Text(message),
             TextButton(onPressed: onRetry, child: const Text('Повторить')),
           ],
@@ -767,7 +774,11 @@ class _InlineNotice extends StatelessWidget {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Icon(icon, size: 18, color: const Color(0xFF5A675F)),
+        Icon(
+          icon,
+          size: 18,
+          color: Theme.of(context).colorScheme.onSurfaceVariant,
+        ),
         const SizedBox(width: 8),
         Expanded(
           child: Text(text, style: Theme.of(context).textTheme.bodyMedium),
@@ -785,13 +796,15 @@ class _EmptyRates extends StatelessWidget {
     return Container(
       key: const Key('empty-rates'),
       decoration: BoxDecoration(
-        border: Border.all(color: const Color(0xFFD5DFDA)),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+        ),
         borderRadius: BorderRadius.circular(10),
       ),
       padding: const EdgeInsets.all(24),
       child: Row(
         children: [
-          const Icon(Icons.add_chart_rounded, color: Color(0xFF285C4D)),
+          Icon(Icons.add_chart_rounded, color: Theme.of(context).colorScheme.primary),
           const SizedBox(width: 12),
           Expanded(
             child: Text(

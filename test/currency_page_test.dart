@@ -6,6 +6,7 @@ import 'package:currency/currency_page.dart';
 import 'package:currency/exchange_rates.dart';
 import 'package:currency/main.dart';
 import 'package:currency/rate_table_preferences.dart';
+import 'package:currency/theme_preference.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -909,6 +910,117 @@ void main() {
 
     expect(selected, 'JPY');
   });
+
+  testWidgets('шапка компактная: иконки рядом с заголовком, подзаголовка нет', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      (request) async => request.url.path.endsWith('/currencies')
+          ? _catalog()
+          : _rates(request),
+    );
+
+    final titleRect = tester.getRect(find.text('Курсы валют'));
+    final refreshRect = tester.getRect(find.byKey(const Key('refresh-button')));
+    final toggleRect = tester.getRect(
+      find.byKey(const Key('theme-toggle-button')),
+    );
+    expect(refreshRect.left, greaterThan(titleRect.right));
+    expect(refreshRect.top, lessThan(titleRect.bottom));
+    expect(toggleRect.left, greaterThan(refreshRect.right));
+    expect(toggleRect.top, lessThan(titleRect.bottom));
+    expect(
+      find.text(
+        'Сравнивайте ежедневные справочные курсы и пересчитывайте суммы.',
+      ),
+      findsNothing,
+    );
+    final refresh = tester.widget<IconButton>(
+      find.byKey(const Key('refresh-button')),
+    );
+    expect(refresh.tooltip, 'Обновить');
+    expect(
+      find.textContaining('Обновить'),
+      findsNothing,
+      reason: 'У кнопки обновления не должно быть видимой надписи',
+    );
+  });
+
+  testWidgets('переключатель темы меняет тему и запоминает выбор', (
+    tester,
+  ) async {
+    final themeStore = _FakeThemeStore();
+    await _pump(
+      tester,
+      (request) async => request.url.path.endsWith('/currencies')
+          ? _catalog()
+          : _rates(request),
+      themeStore: themeStore,
+    );
+
+    final toggle = find.byKey(const Key('theme-toggle-button'));
+    final materialApp = find.byType(MaterialApp);
+    expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.light);
+    expect(tester.widget<IconButton>(toggle).tooltip, 'Тёмная тема');
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.dark);
+    expect(tester.widget<IconButton>(toggle).tooltip, 'Светлая тема');
+    expect(themeStore.writes, 1);
+    expect(themeStore.initial, ThemeMode.dark);
+
+    await tester.tap(toggle);
+    await tester.pumpAndSettle();
+    expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.light);
+    expect(themeStore.writes, 2);
+    expect(themeStore.initial, ThemeMode.light);
+  });
+
+  testWidgets('сохранённая тёмная тема восстанавливается при запуске', (
+    tester,
+  ) async {
+    await _pump(
+      tester,
+      (request) async => request.url.path.endsWith('/currencies')
+          ? _catalog()
+          : _rates(request),
+      themeStore: _FakeThemeStore(initial: ThemeMode.dark),
+    );
+
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+      ThemeMode.dark,
+    );
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byKey(const Key('theme-toggle-button')),
+          )
+          .tooltip,
+      'Светлая тема',
+    );
+  });
+
+  testWidgets('ошибка записи темы не мешает переключению', (tester) async {
+    await _pump(
+      tester,
+      (request) async => request.url.path.endsWith('/currencies')
+          ? _catalog()
+          : _rates(request),
+      themeStore: _FakeThemeStore(throwOnWrite: true),
+    );
+
+    await tester.tap(find.byKey(const Key('theme-toggle-button')));
+    await tester.pumpAndSettle();
+
+    expect(
+      tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+      ThemeMode.dark,
+    );
+    expect(tester.takeException(), isNull);
+  });
 }
 
 Future<void> _pump(
@@ -917,6 +1029,7 @@ Future<void> _pump(
   bool settle = true,
   double textScale = 1,
   RateTablePreferencesStore? preferencesStore,
+  ThemePreferenceStore? themeStore,
 }) async {
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
@@ -924,9 +1037,28 @@ Future<void> _pump(
     key: UniqueKey(),
     api: ExchangeRatesApi(client: MockClient(handler)),
     preferencesStore: preferencesStore,
+    themeStore: themeStore,
   );
   await tester.pumpWidget(app);
   if (settle) await tester.pumpAndSettle();
+}
+
+class _FakeThemeStore implements ThemePreferenceStore {
+  _FakeThemeStore({this.initial, this.throwOnWrite = false});
+
+  ThemeMode? initial;
+  final bool throwOnWrite;
+  int writes = 0;
+
+  @override
+  ThemeMode? read() => initial;
+
+  @override
+  void write(ThemeMode mode) {
+    if (throwOnWrite) throw StateError('write failed');
+    writes++;
+    initial = mode;
+  }
 }
 
 class _FakePreferencesStore implements RateTablePreferencesStore {

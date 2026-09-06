@@ -43,13 +43,12 @@ AmountParseResult parseAmount(String input) {
   return AmountParseResult.valid(amount);
 }
 
-double convertAmount(double amount, double rate) {
-  final result = amount * rate;
-  if (!amount.isFinite ||
-      amount < 0 ||
-      !rate.isFinite ||
-      rate <= 0 ||
-      !result.isFinite) {
+double convertAmount(double amount, double rate, {bool reverse = false}) {
+  if (!amount.isFinite || amount < 0 || !rate.isFinite || rate <= 0) {
+    throw const FormatException('Невозможно рассчитать сумму.');
+  }
+  final result = reverse ? amount / rate : amount * rate;
+  if (!result.isFinite) {
     throw const FormatException('Невозможно рассчитать сумму.');
   }
   return result;

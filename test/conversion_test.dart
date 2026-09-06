@@ -44,10 +44,36 @@ void main() {
       expect(convertAmount(3000, 1), 3000);
     });
 
-    test('отклоняет неконечный результат и неверный курс', () {
+    test('делит на полный курс для обратного направления', () {
+      expect(convertAmount(100, 25, reverse: true), 4);
+      final result = convertAmount(1000000, 1.23456789, reverse: true);
+      expect(result, 1000000 / 1.23456789);
+      expect(_plain(formatMoney(result, 'EUR')), '810 000,01 EUR');
+      expect(convertAmount(0, 5e-324, reverse: true), 0);
+      expect(convertAmount(3000, 1, reverse: true), 3000);
+    });
+
+    test('проверяет входы и переполнение обоих направлений', () {
+      for (final reverse in [false, true]) {
+        expect(convertAmount(0, 25, reverse: reverse), 0);
+        for (final rate in [0.0, -1.0, double.nan, double.infinity]) {
+          expect(
+            () => convertAmount(1, rate, reverse: reverse),
+            throwsFormatException,
+          );
+        }
+        for (final amount in [-1.0, double.nan, double.infinity]) {
+          expect(
+            () => convertAmount(amount, 1, reverse: reverse),
+            throwsFormatException,
+          );
+        }
+      }
       expect(() => convertAmount(double.maxFinite, 2), throwsFormatException);
-      expect(() => convertAmount(1, 0), throwsFormatException);
-      expect(() => convertAmount(1, double.nan), throwsFormatException);
+      expect(
+        () => convertAmount(double.maxFinite, 0.5, reverse: true),
+        throwsFormatException,
+      );
     });
 
     test('форматирует 0, 2 и 3 знака валюты', () {

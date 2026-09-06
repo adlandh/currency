@@ -28,7 +28,6 @@ void main() {
     );
     final ordered = [
       'amount-field',
-      'base-menu',
       'rate-row-USD',
       'rate-row-CZK',
       'rate-row-GBP',
@@ -48,6 +47,7 @@ void main() {
       '1',
     );
     for (final key in [
+      'base-menu',
       'from-menu',
       'to-menu',
       'swap-currencies-button',
@@ -55,9 +55,15 @@ void main() {
     ]) {
       expect(find.byKey(Key(key)), findsNothing);
     }
+    await tester.enterText(
+      find.byKey(const Key('amount-field')),
+      '1000000000000',
+    );
+    await tester.pump();
+    expect(tester.takeException(), isNull);
     expect(find.text('Конвертер'), findsNothing);
     expect(find.text('Курсы относительно'), findsNothing);
-    for (final label in ['Валюта', 'Курс', 'Получится']) {
+    for (final label in ['Валюта', 'Курс', 'EUR → валюта', 'Валюта → EUR']) {
       expect(find.text(label), findsOneWidget);
     }
     expect(
@@ -89,7 +95,14 @@ void main() {
       await tester.pump();
       for (final code in ['EUR', 'JPY', 'KWD']) {
         expect(_text(tester, Key('conversion-result-$code')), status);
+        expect(_text(tester, Key('reverse-result-$code')), status);
       }
+      expect(
+        find.text(
+          'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
+        ),
+        findsOneWidget,
+      );
       expect(find.text('1 EUR = 160,0000 JPY'), findsOneWidget);
       expect(find.textContaining('За 4 сентября'), findsNWidgets(2));
     }
@@ -101,12 +114,16 @@ void main() {
       ('KWD', '0,000 KWD'),
     ]) {
       expect(_text(tester, Key('conversion-result-$code')), expected);
+      expect(_text(tester, Key('reverse-result-$code')), '0,00 EUR');
     }
     await tester.enterText(find.byKey(const Key('amount-field')), '12,3456');
     await tester.pump();
     expect(_text(tester, const Key('conversion-result-EUR')), '12,35 EUR');
     expect(_text(tester, const Key('conversion-result-JPY')), '1 975 JPY');
     expect(_text(tester, const Key('conversion-result-KWD')), '4,074 KWD');
+    expect(_text(tester, const Key('reverse-result-EUR')), '12,35 EUR');
+    expect(_text(tester, const Key('reverse-result-JPY')), '0,08 EUR');
+    expect(_text(tester, const Key('reverse-result-KWD')), '37,41 EUR');
   });
 
   testWidgets('неконечный результат показывает ошибку только своей строки', (
@@ -118,6 +135,7 @@ void main() {
         jsonEncode([
           {'base': 'EUR', 'quote': 'USD', 'rate': 1e300, 'date': '2026-09-04'},
           {'base': 'EUR', 'quote': 'CZK', 'rate': 25, 'date': '2026-09-04'},
+          {'base': 'EUR', 'quote': 'GBP', 'rate': 1e-300, 'date': '2026-09-04'},
         ]),
         200,
       );
@@ -134,6 +152,12 @@ void main() {
     expect(
       _text(tester, const Key('conversion-result-CZK')),
       '25 000 000 000 000,00 CZK',
+    );
+    expect(_text(tester, const Key('reverse-result-USD')), '0,00 EUR');
+    expect(_text(tester, const Key('conversion-result-GBP')), '0,00 GBP');
+    expect(
+      _text(tester, const Key('reverse-result-GBP')),
+      'Не удалось рассчитать сумму.',
     );
     expect(find.textContaining('NaN'), findsNothing);
     expect(find.textContaining('Infinity'), findsNothing);
@@ -172,35 +196,40 @@ void main() {
     );
   });
 
-  testWidgets('повторный выбор EUR принимает только последний запрос', (
+  testWidgets('возврат списка принимает только последний запрос', (
     tester,
   ) async {
     final oldEur = Completer<http.Response>();
-    final oldUsd = Completer<http.Response>();
-    var eurCalls = 0;
+    final withJpy = Completer<http.Response>();
+    var calls = 0;
     await _pump(tester, (request) async {
       if (request.url.path.endsWith('/currencies')) return _catalog();
-      if (request.url.queryParameters['base'] == 'USD') return oldUsd.future;
-      if (++eurCalls == 1) return oldEur.future;
+      expectSync(request.url.queryParameters['base'], 'EUR');
+      if (++calls == 1) return oldEur.future;
+      if (request.url.queryParameters['quotes']!.contains('JPY')) {
+        return withJpy.future;
+      }
       return _rates(request);
     }, settle: false);
     await tester.pump();
     await tester.pump();
-    await _choose(tester, const Key('base-menu'), 'USD · US Dollar');
-    expect(
-      _text(tester, const Key('conversion-result-CZK')),
-      'Загрузка курса…',
-    );
-    expect(_text(tester, const Key('conversion-result-USD')), '1,00 USD');
-    expect(find.textContaining('1 EUR ='), findsNothing);
+    for (final direction in ['conversion', 'reverse']) {
+      expect(_text(tester, Key('$direction-result-CZK')), 'Загрузка курса…');
+    }
     expect(find.textContaining('За '), findsNothing);
-    await _choose(tester, const Key('base-menu'), 'EUR · Euro');
+    await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
+    await tester.ensureVisible(find.byKey(const Key('remove-JPY')));
+    await tester.tap(find.byKey(const Key('remove-JPY')));
     await tester.pumpAndSettle();
-    oldUsd.complete(_ratesFor('USD', ['CZK', 'GBP'], rateOverride: 99));
+    withJpy.complete(
+      _ratesFor('EUR', ['USD', 'CZK', 'GBP', 'JPY'], rateOverride: 99),
+    );
     oldEur.complete(_ratesFor('EUR', ['USD', 'CZK', 'GBP'], rateOverride: 99));
     await tester.pumpAndSettle();
     expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
-    expect(find.textContaining('1 USD ='), findsNothing);
+    expect(_text(tester, const Key('reverse-result-CZK')), '0,04 EUR');
+    expect(find.byKey(const Key('rate-row-JPY')), findsNothing);
+    expect(calls, 3);
   });
 
   testWidgets(
@@ -212,17 +241,19 @@ void main() {
         (request) async {
           if (request.url.path.endsWith('/currencies')) return _catalog();
           if (++attempts == 1) return http.Response('unavailable', 503);
-          return _ratesFor('USD', ['CZK']);
+          return _ratesFor('EUR', ['CZK']);
         },
         preferencesStore: _FakePreferencesStore(
           value: const RateTablePreferences(
             base: 'USD',
-            targets: ['USD', 'CZK', 'GBP'],
+            targets: ['EUR', 'CZK', 'GBP'],
           ),
         ),
       );
       expect(find.byType(RateRow), findsNWidgets(3));
-      expect(_text(tester, const Key('conversion-result-USD')), '1,00 USD');
+      expect(_text(tester, const Key('conversion-result-EUR')), '1,00 EUR');
+      expect(_text(tester, const Key('reverse-result-EUR')), '1,00 EUR');
+      expect(_text(tester, const Key('reverse-result-CZK')), 'Курс недоступен');
       expect(
         _text(tester, const Key('conversion-result-CZK')),
         'Курс недоступен',
@@ -231,11 +262,13 @@ void main() {
       await tester.ensureVisible(find.text('Повторить'));
       await tester.tap(find.text('Повторить'));
       await tester.pumpAndSettle();
-      expect(_text(tester, const Key('conversion-result-CZK')), '20,83 CZK');
+      expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
       expect(
         _text(tester, const Key('conversion-result-GBP')),
         'Курс недоступен',
       );
+      expect(_text(tester, const Key('reverse-result-CZK')), '0,04 EUR');
+      expect(_text(tester, const Key('reverse-result-GBP')), 'Курс недоступен');
       expect(find.byKey(const Key('remove-GBP')), findsOneWidget);
       expect(attempts, 2);
     },
@@ -258,6 +291,7 @@ void main() {
     refresh.complete(http.Response('unavailable', 503));
     await tester.pumpAndSettle();
     expect(_text(tester, const Key('conversion-result-CZK')), '250,00 CZK');
+    expect(_text(tester, const Key('reverse-result-CZK')), '0,40 EUR');
     expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
     expect(find.textContaining('Показаны предыдущие курсы'), findsOneWidget);
   });
@@ -284,32 +318,6 @@ void main() {
     expect(FocusManager.instance.primaryFocus, same(focus));
     await tester.sendKeyEvent(LogicalKeyboardKey.tab);
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<EditableText>(
-            find.descendant(
-              of: find.byKey(const Key('base-menu')),
-              matching: find.byType(EditableText),
-            ),
-          )
-          .focusNode
-          .hasFocus,
-      isTrue,
-      reason: FocusManager.instance.primaryFocus.toString(),
-    );
-    // Внутренние кнопки меню базы также могут входить в обход Tab.
-    for (var i = 0; i < 5; i++) {
-      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-      await tester.pumpAndSettle();
-      if (tester
-              .getSemantics(find.byKey(const Key('remove-USD')))
-              .getSemanticsData()
-              .flagsCollection
-              .isFocused ==
-          Tristate.isTrue) {
-        break;
-      }
-    }
     expect(
       tester
           .getSemantics(find.byKey(const Key('remove-USD')))
@@ -392,6 +400,13 @@ void main() {
       );
       expect(_text(tester, const Key('conversion-result-GBP')), '2 400,00 GBP');
       expect(find.text('1 EUR = 25,0000 CZK'), findsOneWidget);
+      expect(_text(tester, const Key('reverse-result-USD')), '2 500,00 EUR');
+      expect(_text(tester, const Key('reverse-result-CZK')), '120,00 EUR');
+      expect(_text(tester, const Key('reverse-result-GBP')), '3 750,00 EUR');
+      await tester.enterText(amountField, '100');
+      await tester.pump();
+      expect(_text(tester, const Key('conversion-result-CZK')), '2 500,00 CZK');
+      expect(_text(tester, const Key('reverse-result-CZK')), '4,00 EUR');
       expect(callsBeforeTyping, 1);
       expect(rateCalls, callsBeforeTyping);
       expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
@@ -444,9 +459,11 @@ void main() {
     expect(find.byKey(const Key('add-target-menu')), findsOneWidget);
     expect(store.value?.targets, isEmpty);
 
+    store.value = const RateTablePreferences(base: 'GBP', targets: []);
     rateCalls = 0;
     await _pump(tester, handler, preferencesStore: store);
     expect(find.byKey(const Key('empty-rates')), findsOneWidget);
+    expect(store.value?.base, 'EUR');
     expect(rateCalls, 0);
   });
 
@@ -467,35 +484,6 @@ void main() {
     expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
   });
 
-  testWidgets('смена базы пересчитывает все строки и сохраняет текст суммы', (
-    tester,
-  ) async {
-    await _pump(
-      tester,
-      (request) async => request.url.path.endsWith('/currencies')
-          ? _catalog()
-          : _rates(request),
-    );
-    await tester.enterText(find.byKey(const Key('amount-field')), '3 000');
-    final base = find.byKey(const Key('base-menu'));
-    final state = tester.state(base);
-    await _choose(tester, const Key('base-menu'), 'USD · US Dollar');
-    await tester.pumpAndSettle();
-    expect(tester.state(base), same(state));
-    expect(_menuText(tester, const Key('base-menu')), 'USD · US Dollar');
-    expect(
-      tester
-          .widget<TextField>(find.byKey(const Key('amount-field')))
-          .controller!
-          .text,
-      '3 000',
-    );
-    expect(_text(tester, const Key('conversion-result-USD')), '3 000,00 USD');
-    expect(_text(tester, const Key('conversion-result-CZK')), '62 500,00 CZK');
-    expect(_text(tester, const Key('conversion-result-GBP')), '2 000,00 GBP');
-    expect(find.textContaining('1 EUR ='), findsNothing);
-  });
-
   testWidgets('список только из базы рассчитывается без запроса курса', (
     tester,
   ) async {
@@ -512,6 +500,7 @@ void main() {
     await tester.enterText(find.byKey(const Key('amount-field')), '3000');
     await tester.pump();
     expect(_text(tester, const Key('conversion-result-EUR')), '3 000,00 EUR');
+    expect(_text(tester, const Key('reverse-result-EUR')), '3 000,00 EUR');
     expect(find.text('Тождественный курс'), findsOneWidget);
     expect(find.textContaining('За '), findsNothing);
     await tester.tap(find.byKey(const Key('refresh-button')));
@@ -546,7 +535,7 @@ void main() {
     expect(find.byKey(const Key('amount-field')), findsOneWidget);
     expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
     expect(find.byKey(const Key('rate-row-USD')), findsNothing);
-    expect(store.value?.base, 'CZK');
+    expect(store.value?.base, 'EUR');
   });
 
   testWidgets('обрабатывает пустой каталог и отсутствие начальных валют', (
@@ -568,7 +557,7 @@ void main() {
 
     await tester.tap(find.text('Повторить'));
     await tester.pumpAndSettle();
-    expect(store.value?.base, 'CZK');
+    expect(store.value?.base, 'EUR');
     expect(store.value?.targets, ['JPY']);
     expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
 
@@ -576,13 +565,14 @@ void main() {
       if (request.url.path.endsWith('/currencies')) {
         return http.Response('[{"iso_code":"CHF","name":"Swiss Franc"}]', 200);
       }
-      fail('Для единственной совпадающей валюты запрос не нужен');
+      expectSync(request.url.queryParameters['base'], 'EUR');
+      return _ratesFor('EUR', ['CHF'], rateOverride: 0.9);
     });
-    expect(_menuText(tester, const Key('base-menu')), 'CHF · Swiss Franc');
+    expect(find.byKey(const Key('base-menu')), findsNothing);
     expect(find.byKey(const Key('empty-rates')), findsOneWidget);
     await _choose(tester, const Key('add-target-menu'), 'CHF · Swiss Franc');
     await tester.pumpAndSettle();
-    expect(_text(tester, const Key('conversion-result-CHF')), '1,00 CHF');
+    expect(_text(tester, const Key('conversion-result-CHF')), '0,90 CHF');
   });
 
   testWidgets('неудачное обновление сохраняет прежние значения', (
@@ -594,38 +584,15 @@ void main() {
       return failRates ? http.Response('{}', 503) : _rates(request);
     });
     final before = _text(tester, const Key('conversion-result-CZK'));
+    final reverseBefore = _text(tester, const Key('reverse-result-CZK'));
     failRates = true;
 
     await tester.tap(find.byKey(const Key('refresh-button')));
     await tester.pumpAndSettle();
 
     expect(_text(tester, const Key('conversion-result-CZK')), before);
+    expect(_text(tester, const Key('reverse-result-CZK')), reverseBefore);
     expect(find.textContaining('Показаны предыдущие курсы'), findsOneWidget);
-  });
-
-  testWidgets('поздний ответ старой базы не заменяет новый выбор', (
-    tester,
-  ) async {
-    final delayedUsd = Completer<http.Response>();
-    final store = _FakePreferencesStore();
-    await _pump(tester, (request) async {
-      if (request.url.path.endsWith('/currencies')) return _catalog();
-      if (request.url.queryParameters['base'] == 'USD') {
-        return delayedUsd.future;
-      }
-      return _rates(request);
-    }, preferencesStore: store);
-
-    await _choose(tester, const Key('base-menu'), 'USD · US Dollar');
-    await tester.pump();
-    await _choose(tester, const Key('base-menu'), 'GBP · Pound Sterling');
-    await tester.pumpAndSettle();
-    delayedUsd.complete(_ratesFor('USD', ['CZK', 'GBP']));
-    await tester.pumpAndSettle();
-
-    expect(find.textContaining('1 GBP ='), findsWidgets);
-    expect(find.textContaining('1 USD ='), findsNothing);
-    expect(store.value?.base, 'GBP');
   });
 
   testWidgets('первый запрос таблицы использует сохранённый выбор', (
@@ -643,7 +610,7 @@ void main() {
     }, preferencesStore: store);
 
     final tableRequest = rateRequests.singleWhere(
-      (uri) => uri.queryParameters['base'] == 'CZK',
+      (uri) => uri.queryParameters['base'] == 'EUR',
     );
     expect(tableRequest.queryParameters['quotes'], 'JPY,USD');
     expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
@@ -654,7 +621,7 @@ void main() {
       lessThan(tester.getTopLeft(find.byKey(const Key('rate-row-USD'))).dy),
     );
     expect(rateRequests.length, 1);
-    expect(_text(tester, const Key('conversion-result-JPY')), '6 JPY');
+    expect(_text(tester, const Key('conversion-result-JPY')), '160 JPY');
     expect(
       tester
           .widget<TextField>(find.byKey(const Key('amount-field')))
@@ -691,10 +658,10 @@ void main() {
     'сохраняет изменения даже при ошибке курсов и восстанавливает их',
     (tester) async {
       final store = _FakePreferencesStore();
-      var failUsd = true;
+      var failRates = true;
       Future<http.Response> handler(http.Request request) async {
         if (request.url.path.endsWith('/currencies')) return _catalog();
-        if (failUsd && request.url.queryParameters['base'] == 'USD') {
+        if (failRates) {
           return http.Response('{}', 503);
         }
         return _rates(request);
@@ -707,23 +674,16 @@ void main() {
       await tester.ensureVisible(remove);
       await tester.tap(remove);
       await tester.pumpAndSettle();
-      await _choose(tester, const Key('base-menu'), 'USD · US Dollar');
-      await tester.pumpAndSettle();
 
       expect(find.textContaining('ошибку 503'), findsOneWidget);
-      expect(store.value?.base, 'USD');
+      expect(store.value?.base, 'EUR');
       expect(store.value?.targets, ['USD', 'CZK', 'JPY']);
 
-      failUsd = false;
+      failRates = false;
       await _pump(tester, handler, preferencesStore: store);
       expect(find.byKey(const Key('rate-row-GBP')), findsNothing);
       expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
-      expect(
-        tester
-            .widget<DropdownMenu<String>>(find.byKey(const Key('base-menu')))
-            .initialSelection,
-        'USD',
-      );
+      expect(find.textContaining('1 EUR ='), findsWidgets);
     },
   );
 
@@ -765,14 +725,12 @@ void main() {
       find.textContaining('Не удалось сохранить настройки'),
       findsOneWidget,
     );
-    await _choose(tester, const Key('base-menu'), 'USD · US Dollar');
+    await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
     await tester.pumpAndSettle();
-    expect(
-      tester
-          .widget<DropdownMenu<String>>(find.byKey(const Key('base-menu')))
-          .initialSelection,
-      'USD',
-    );
+    await tester.enterText(find.byKey(const Key('amount-field')), '100');
+    await tester.pump();
+    expect(_text(tester, const Key('conversion-result-JPY')), '16 000 JPY');
+    expect(_text(tester, const Key('reverse-result-JPY')), '0,63 EUR');
     semantics.dispose();
   });
 
@@ -797,6 +755,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byKey(const Key('rate-row-KWD')), findsNothing);
+    expect(find.byKey(const Key('conversion-result-KWD')), findsNothing);
+    expect(find.byKey(const Key('reverse-result-KWD')), findsNothing);
+    expect(_text(tester, const Key('reverse-result-CZK')), '0,04 EUR');
     expect(tester.takeException(), isNull);
   });
 
@@ -834,7 +795,7 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.byKey(const Key('amount-field')), findsOneWidget);
-    expect(find.byKey(const Key('base-menu')), findsOneWidget);
+    expect(find.byKey(const Key('base-menu')), findsNothing);
     await tester.enterText(
       find.byKey(const Key('amount-field')),
       '1000000000000',
@@ -844,10 +805,16 @@ void main() {
       _text(tester, const Key('conversion-result-CZK')),
       '25 000 000 000 000,00 CZK',
     );
+    expect(find.text('EUR → CZK'), findsOneWidget);
+    expect(find.text('CZK → EUR'), findsOneWidget);
+    expect(
+      _text(tester, const Key('reverse-result-CZK')),
+      '40 000 000 000,00 EUR',
+    );
     for (final key in [
       'amount-field',
-      'base-menu',
       'conversion-result-CZK',
+      'reverse-result-CZK',
       'remove-CZK',
       'add-target-menu',
     ]) {
@@ -883,7 +850,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(
       tester.getSemantics(result).getSemanticsData().label,
-      contains('Результат конвертации в CZK'),
+      contains('Результат конвертации EUR → CZK'),
     );
     expect(
       tester
@@ -893,54 +860,15 @@ void main() {
           .isButton,
       isTrue,
     );
+    final reverse = find.byKey(const Key('reverse-result-CZK'));
+    await tester.ensureVisible(reverse);
+    await tester.pumpAndSettle();
+    expect(
+      tester.getSemantics(reverse).getSemanticsData().label,
+      contains('Результат конвертации CZK → EUR'),
+    );
     expect(data.flagsCollection.isLiveRegion, isTrue);
     semantics.dispose();
-  });
-
-  testWidgets('поиск базы очищает и восстанавливает выбор без запроса', (
-    tester,
-  ) async {
-    var calls = 0;
-    await _pump(tester, (request) async {
-      if (request.url.path.endsWith('/currencies')) return _catalog();
-      calls++;
-      return _rates(request);
-    });
-    const key = Key('base-menu');
-    final before = _text(tester, const Key('conversion-result-CZK'));
-    for (final input in ['', 'JPY']) {
-      for (final close in ['escape', 'tab', 'outside']) {
-        await tester.ensureVisible(find.byKey(key));
-        await tester.tap(find.byKey(key));
-        await tester.pumpAndSettle();
-        expect(_menuText(tester, key), isEmpty);
-        await tester.enterText(_menuField(key), input);
-        await tester.pumpAndSettle();
-        expect(_text(tester, const Key('conversion-result-CZK')), before);
-        if (close == 'outside') {
-          await tester.tapAt(
-            tester.getTopLeft(find.byKey(key)) - const Offset(20, 0),
-          );
-        } else {
-          await tester.sendKeyEvent(
-            close == 'tab' ? LogicalKeyboardKey.tab : LogicalKeyboardKey.escape,
-          );
-        }
-        await tester.pumpAndSettle();
-        expect(_menuText(tester, key), 'EUR · Euro', reason: '$close / $input');
-        expect(calls, 1);
-      }
-    }
-    await tester.tap(find.byKey(key));
-    await tester.pumpAndSettle();
-    await tester.enterText(_menuField(key), 'Pound');
-    await tester.pumpAndSettle();
-    await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
-    await tester.testTextInput.receiveAction(TextInputAction.done);
-    await tester.pumpAndSettle();
-    expect(_menuText(tester, key), 'GBP · Pound Sterling');
-    expect(_text(tester, const Key('conversion-result-GBP')), '1,00 GBP');
-    expect(calls, 2);
   });
 
   testWidgets('валюту можно найти и выбрать клавиатурой', (tester) async {
@@ -957,7 +885,6 @@ void main() {
                 CurrencyInfo(code: 'EUR', name: 'Euro'),
                 CurrencyInfo(code: 'JPY', name: 'Japanese Yen'),
               ],
-              selectedCode: 'EUR',
               onSelected: (value) => selected = value,
             ),
           ),

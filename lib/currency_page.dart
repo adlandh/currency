@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 
 import 'conversion.dart';
@@ -27,7 +26,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   List<CurrencyInfo> _currencies = const [];
   List<String> _targets = const [];
-  String? _base;
+  static const _base = 'EUR';
 
   bool _catalogLoading = true;
   String? _catalogError;
@@ -74,16 +73,12 @@ class _CurrencyPageState extends State<CurrencyPage> {
       if (!mounted || request != _catalogRequest) return;
       final codes = currencies.map((currency) => currency.code).toSet();
       final saved = _savedPreferences;
-      final base = saved != null && codes.contains(saved.base)
-          ? saved.base
-          : _pick(codes, 'EUR');
       final targets = saved == null
           ? ['USD', 'CZK', 'GBP'].where(codes.contains).toList()
           : _availableUnique(saved.targets, codes);
       setState(() {
         _currencies = currencies;
         _catalogLoading = false;
-        _base = base;
         _targets = targets;
         _tableRates = const {};
         _missingTableRates = const {};
@@ -110,14 +105,10 @@ class _CurrencyPageState extends State<CurrencyPage> {
     ];
   }
 
-  String? _pick(Set<String> codes, String preferred) =>
-      codes.contains(preferred) ? preferred : codes.firstOrNull;
-
   Future<void> _loadTableRates({bool refresh = false}) async {
     final base = _base;
     final targets = List<String>.of(_targets);
     final request = ++_tableRequest;
-    if (base == null) return;
     final requested = targets.where((target) => target != base).toSet();
     if (requested.isEmpty) {
       setState(() {
@@ -142,14 +133,14 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
     try {
       final rates = await widget.api.fetchRates(base, requested);
-      if (!_tableRequestIsCurrent(request, base, targets)) return;
+      if (!_tableRequestIsCurrent(request, targets)) return;
       setState(() {
         _tableLoading = false;
         _tableRates = rates;
         _missingTableRates = requested.difference(rates.keys.toSet());
       });
     } on ExchangeRatesException catch (error) {
-      if (!_tableRequestIsCurrent(request, base, targets)) return;
+      if (!_tableRequestIsCurrent(request, targets)) return;
       setState(() {
         _tableLoading = false;
         if (refresh && _tableRates.isNotEmpty) {
@@ -163,11 +154,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
     }
   }
 
-  bool _tableRequestIsCurrent(int request, String base, List<String> targets) {
-    return mounted &&
-        request == _tableRequest &&
-        base == _base &&
-        _sameItems(targets, _targets);
+  bool _tableRequestIsCurrent(int request, List<String> targets) {
+    return mounted && request == _tableRequest && _sameItems(targets, _targets);
   }
 
   bool _sameItems(List<String> left, List<String> right) =>
@@ -181,13 +169,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
       return;
     }
     await _loadTableRates(refresh: true);
-  }
-
-  void _changeBase(String? value) {
-    if (value == null || value == _base) return;
-    setState(() => _base = value);
-    _persistRateTablePreferences();
-    unawaited(_loadTableRates());
   }
 
   void _addTarget(String? value) {
@@ -208,7 +189,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   void _persistRateTablePreferences({bool clearNoticeOnSuccess = true}) {
     final base = _base;
-    if (base == null) return;
     final preferences = RateTablePreferences(
       base: base,
       targets: List<String>.of(_targets),
@@ -359,14 +339,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
           onChanged: (_) => setState(() {}),
         ),
         const SizedBox(height: 16),
-        CurrencyMenu(
-          key: ValueKey('base-${_currencies.length}'),
-          fieldKey: const Key('base-menu'),
-          label: 'Базовая валюта',
-          currencies: _currencies,
-          selectedCode: _base,
-          clearSelectionOnOpen: true,
-          onSelected: _changeBase,
+        const Text(
+          'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
         ),
         const SizedBox(height: 24),
         if (_tableError != null) ...[
@@ -391,7 +365,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
               child: LayoutBuilder(
                 builder: (context, constraints) {
                   final compact =
-                      constraints.maxWidth < 760 ||
+                      constraints.maxWidth < 900 ||
                       MediaQuery.textScalerOf(context).scale(17) > 25;
                   return Column(
                     children: [
@@ -407,7 +381,15 @@ class _CurrencyPageState extends State<CurrencyPage> {
                               Expanded(
                                 flex: 3,
                                 child: Text(
-                                  'Получится',
+                                  'EUR → валюта',
+                                  textAlign: TextAlign.right,
+                                ),
+                              ),
+                              SizedBox(width: 20),
+                              Expanded(
+                                flex: 3,
+                                child: Text(
+                                  'Валюта → EUR',
                                   textAlign: TextAlign.right,
                                 ),
                               ),
@@ -421,7 +403,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
                         RateRow(
                           key: Key('rate-row-${_targets[index]}'),
                           currency: _currency(_targets[index])!,
-                          base: _base!,
+                          base: _base,
                           rate: _tableRates[_targets[index]],
                           identity: _targets[index] == _base,
                           missing: _missingTableRates.contains(_targets[index]),
@@ -469,160 +451,47 @@ class _CurrencyPageState extends State<CurrencyPage> {
   }
 }
 
-class CurrencyMenu extends StatefulWidget {
+class CurrencyMenu extends StatelessWidget {
   const CurrencyMenu({
     super.key,
     required this.fieldKey,
     required this.label,
     required this.currencies,
     required this.onSelected,
-    this.selectedCode,
     this.disabledCodes = const {},
-    this.clearSelectionOnOpen = false,
   });
 
   final Key fieldKey;
   final String label;
   final List<CurrencyInfo> currencies;
-  final String? selectedCode;
   final Set<String> disabledCodes;
-  final bool clearSelectionOnOpen;
   final ValueChanged<String?> onSelected;
-
-  @override
-  State<CurrencyMenu> createState() => _CurrencyMenuState();
-}
-
-class _CurrencyMenuState extends State<CurrencyMenu> {
-  final _textController = TextEditingController();
-  final _menuController = MenuController();
-  late final FocusNode _focusNode;
-  bool _searching = false;
-
-  @override
-  void initState() {
-    super.initState();
-    _focusNode = FocusNode(onKeyEvent: _handleKey);
-    _focusNode.addListener(_restoreAfterFocusLoss);
-  }
-
-  @override
-  void didUpdateWidget(CurrencyMenu oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (oldWidget.selectedCode != widget.selectedCode) {
-      _searching = false;
-      _menuController.close();
-    }
-  }
-
-  @override
-  void dispose() {
-    _focusNode
-      ..removeListener(_restoreAfterFocusLoss)
-      ..dispose();
-    _textController.dispose();
-    super.dispose();
-  }
-
-  void _startSearch() {
-    if (!widget.clearSelectionOnOpen || _menuController.isOpen) return;
-    _searching = true;
-    _textController.clear();
-  }
-
-  void _restoreAfterFocusLoss() {
-    if (!_focusNode.hasFocus) _restoreAfterMenuCloses();
-  }
-
-  void _restoreAfterMenuCloses() {
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && !_menuController.isOpen) _restoreSelection();
-    });
-  }
-
-  void _restoreSelection() {
-    if (!_searching) return;
-    _searching = false;
-    final label = widget.currencies
-        .where((currency) => currency.code == widget.selectedCode)
-        .map((currency) => currency.label)
-        .firstOrNull;
-    _textController.value = TextEditingValue(
-      text: label ?? '',
-      selection: TextSelection.collapsed(offset: label?.length ?? 0),
-    );
-  }
-
-  void _select(String? value) {
-    if (value == null) {
-      _restoreSelection();
-      return;
-    }
-    _searching = false;
-    widget.onSelected(value);
-  }
-
-  KeyEventResult _handleKey(FocusNode _, KeyEvent event) {
-    if (!widget.clearSelectionOnOpen || event is! KeyDownEvent) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.escape &&
-        (_menuController.isOpen || _searching)) {
-      _menuController.close();
-      _restoreSelection();
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.tab &&
-        (_menuController.isOpen || _searching)) {
-      _menuController.close();
-      _restoreSelection();
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowDown) _startSearch();
-    return KeyEventResult.ignored;
-  }
 
   @override
   Widget build(BuildContext context) {
     return FocusTraversalGroup(
       policy: WidgetOrderTraversalPolicy(),
-      child: TapRegion(
-        onTapOutside: (_) => _restoreAfterMenuCloses(),
-        child: Listener(
-          onPointerDown: (_) {
-            if (_menuController.isOpen) {
-              _restoreAfterMenuCloses();
-            } else {
-              _startSearch();
-            }
-          },
-          child: LayoutBuilder(
-            builder: (context, constraints) => DropdownMenu<String>(
-              key: widget.fieldKey,
-              width: constraints.maxWidth,
-              label: Text(widget.label),
-              controller: _textController,
-              focusNode: _focusNode,
-              menuController: _menuController,
-              initialSelection: widget.selectedCode,
-              enableFilter: true,
-              enableSearch: true,
-              requestFocusOnTap: true,
-              menuHeight: 360,
-              leadingIcon: const Icon(Icons.search_rounded, size: 20),
-              inputDecorationTheme: Theme.of(context).inputDecorationTheme,
-              dropdownMenuEntries: widget.currencies
-                  .map(
-                    (currency) => DropdownMenuEntry(
-                      value: currency.code,
-                      label: currency.label,
-                      enabled: !widget.disabledCodes.contains(currency.code),
-                    ),
-                  )
-                  .toList(),
-              onSelected: _select,
-            ),
-          ),
+      child: LayoutBuilder(
+        builder: (context, constraints) => DropdownMenu<String>(
+          key: fieldKey,
+          width: constraints.maxWidth,
+          label: Text(label),
+          enableFilter: true,
+          enableSearch: true,
+          requestFocusOnTap: true,
+          menuHeight: 360,
+          leadingIcon: const Icon(Icons.search_rounded, size: 20),
+          inputDecorationTheme: Theme.of(context).inputDecorationTheme,
+          dropdownMenuEntries: currencies
+              .map(
+                (currency) => DropdownMenuEntry(
+                  value: currency.code,
+                  label: currency.label,
+                  enabled: !disabledCodes.contains(currency.code),
+                ),
+              )
+              .toList(),
+          onSelected: onSelected,
         ),
       ),
     );
@@ -728,8 +597,11 @@ class _RateRowState extends State<RateRow> {
                   const Text('Курс'),
                   details,
                   const SizedBox(height: 14),
-                  const Text('Получится'),
+                  Text('${widget.base} → ${widget.currency.code}'),
                   _result(context),
+                  const SizedBox(height: 14),
+                  Text('${widget.currency.code} → ${widget.base}'),
+                  _result(context, reverse: true),
                 ],
               );
             }
@@ -740,6 +612,8 @@ class _RateRowState extends State<RateRow> {
                 Expanded(flex: 4, child: details),
                 const SizedBox(width: 20),
                 Expanded(flex: 3, child: _result(context)),
+                const SizedBox(width: 20),
+                Expanded(flex: 3, child: _result(context, reverse: true)),
                 const SizedBox(width: 8),
                 remove,
               ],
@@ -750,7 +624,9 @@ class _RateRowState extends State<RateRow> {
     );
   }
 
-  Widget _result(BuildContext context) {
+  Widget _result(BuildContext context, {bool reverse = false}) {
+    final from = reverse ? widget.currency.code : widget.base;
+    final to = reverse ? widget.base : widget.currency.code;
     final rate = widget.identity ? 1.0 : widget.rate?.rate;
     String result;
     if (widget.amount.status == AmountStatus.empty) {
@@ -764,8 +640,8 @@ class _RateRowState extends State<RateRow> {
     } else {
       try {
         result = formatMoney(
-          convertAmount(widget.amount.value!, rate),
-          widget.currency.code,
+          convertAmount(widget.amount.value!, rate, reverse: reverse),
+          to,
         );
       } on FormatException {
         result = 'Не удалось рассчитать сумму.';
@@ -773,9 +649,10 @@ class _RateRowState extends State<RateRow> {
     }
     return Text(
       result.replaceAll('\u00a0', ' '),
-      key: Key('conversion-result-${widget.currency.code}'),
-      semanticsLabel:
-          'Результат конвертации в ${widget.currency.code}: $result',
+      key: Key(
+        '${reverse ? 'reverse' : 'conversion'}-result-${widget.currency.code}',
+      ),
+      semanticsLabel: 'Результат конвертации $from → $to: $result',
       textAlign: widget.compact ? TextAlign.left : TextAlign.right,
       style: Theme.of(context).textTheme.titleMedium
           ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),

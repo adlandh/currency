@@ -1,4 +1,7 @@
 import 'dart:async';
+
+import 'package:currency/theme_location.dart';
+
 import 'dart:convert';
 import 'dart:ui' show Tristate;
 
@@ -961,21 +964,19 @@ void main() {
 
     final toggle = find.byKey(const Key('theme-toggle-button'));
     final materialApp = find.byType(MaterialApp);
-    expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.light);
-    expect(tester.widget<IconButton>(toggle).tooltip, 'Тёмная тема');
+    expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.system);
+    expect(tester.widget<IconButton>(toggle).tooltip, 'Тема: Авто, светлая');
 
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
+    await _selectTheme(tester, 'dark');
     expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.dark);
-    expect(tester.widget<IconButton>(toggle).tooltip, 'Светлая тема');
+    expect(tester.widget<IconButton>(toggle).tooltip, 'Тема: Тёмная');
     expect(themeStore.writes, 1);
-    expect(themeStore.initial, ThemeMode.dark);
+    expect(themeStore.initial, ThemePreference.dark);
 
-    await tester.tap(toggle);
-    await tester.pumpAndSettle();
+    await _selectTheme(tester, 'light');
     expect(tester.widget<MaterialApp>(materialApp).themeMode, ThemeMode.light);
     expect(themeStore.writes, 2);
-    expect(themeStore.initial, ThemeMode.light);
+    expect(themeStore.initial, ThemePreference.light);
   });
 
   testWidgets('сохранённая тёмная тема восстанавливается при запуске', (
@@ -986,7 +987,7 @@ void main() {
       (request) async => request.url.path.endsWith('/currencies')
           ? _catalog()
           : _rates(request),
-      themeStore: _FakeThemeStore(initial: ThemeMode.dark),
+      themeStore: _FakeThemeStore(initial: ThemePreference.dark),
     );
 
     expect(
@@ -995,11 +996,9 @@ void main() {
     );
     expect(
       tester
-          .widget<IconButton>(
-            find.byKey(const Key('theme-toggle-button')),
-          )
+          .widget<IconButton>(find.byKey(const Key('theme-toggle-button')))
           .tooltip,
-      'Светлая тема',
+      'Тема: Тёмная',
     );
   });
 
@@ -1012,14 +1011,343 @@ void main() {
       themeStore: _FakeThemeStore(throwOnWrite: true),
     );
 
-    await tester.tap(find.byKey(const Key('theme-toggle-button')));
-    await tester.pumpAndSettle();
+    await _selectTheme(tester, 'dark');
 
     expect(
       tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
       ThemeMode.dark,
     );
     expect(tester.takeException(), isNull);
+  });
+  testWidgets(
+    'автоматика сохраняет данные и фокус при восходе, закате и смене часов',
+    (tester) async {
+      var now = DateTime.utc(1994, 1, 2, 7, 7);
+      var requests = 0;
+      var positions = 0;
+      final store = _FakeThemeStore();
+      await _pump(
+        tester,
+        (request) async {
+          requests++;
+          return request.url.path.endsWith('/currencies')
+              ? _catalog()
+              : _rates(request);
+        },
+        themeStore: store,
+        clock: () => now,
+        locationProvider: () async {
+          positions++;
+          return (latitude: 35.0, longitude: 0.0);
+        },
+      );
+      ThemeMode? mode() =>
+          tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode;
+      expect(mode(), ThemeMode.dark);
+      await tester.enterText(find.byKey(const Key('amount-field')), '123');
+      await tester.pump();
+      final field = tester.widget<TextField>(
+        find.byKey(const Key('amount-field')),
+      );
+      final editable = find.descendant(
+        of: find.byKey(const Key('amount-field')),
+        matching: find.byType(EditableText),
+      );
+      final focus = tester.widget<EditableText>(editable).focusNode;
+      final result = _text(tester, const Key('conversion-result-CZK'));
+      final rows = tester
+          .widgetList(find.byKey(const Key('rate-row-USD')))
+          .length;
+      final before = requests;
+      for (final (instant, expected) in [
+        (DateTime.utc(1994, 1, 2, 7, 10), ThemeMode.light),
+        (DateTime.utc(1994, 1, 2, 17, 1), ThemeMode.dark),
+        (DateTime.utc(1994, 1, 3, 12), ThemeMode.light),
+        (DateTime.utc(1994, 1, 2), ThemeMode.dark),
+      ]) {
+        now = instant;
+        await tester.pump(const Duration(minutes: 1));
+        await tester.pumpAndSettle();
+        expect(mode(), expected);
+        expect(field.controller!.text, '123');
+        expect(focus.hasFocus, isTrue);
+        expect(_text(tester, const Key('conversion-result-CZK')), result);
+        expect(
+          tester.widgetList(find.byKey(const Key('rate-row-USD'))).length,
+          rows,
+        );
+        expect(requests, before);
+        expect(store.writes, 0);
+        expect(positions, 1);
+      }
+      await tester.pumpWidget(const SizedBox());
+      await tester.pump(const Duration(minutes: 2));
+      expect(positions, 1);
+    },
+  );
+
+  testWidgets(
+    'возврат пересчитывает сразу и обновляет координаты без перекрытия',
+    (tester) async {
+      var now = DateTime.utc(2026, 9, 6, 12);
+      final refresh = Completer<ThemeLocation?>();
+      var calls = 0;
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+        clock: () => now,
+        locationProvider: () {
+          calls++;
+          return calls == 1
+              ? Future.value((latitude: 0.0, longitude: 0.0))
+              : refresh.future;
+        },
+      );
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.hidden);
+      now = DateTime.utc(2026, 9, 7);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pump();
+      expect(
+        tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+        ThemeMode.dark,
+      );
+      expect(calls, 2);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      expect(calls, 2);
+      refresh.complete(null);
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+        ThemeMode.system,
+      );
+    },
+  );
+
+  testWidgets('ошибки координат следуют системе до явного повтора Авто', (
+    tester,
+  ) async {
+    for (final result in <Future<ThemeLocation?> Function()>[
+      () async => null,
+      () async => throw StateError('denied'),
+      () async => (latitude: double.nan, longitude: 0.0),
+      () => Completer<ThemeLocation?>().future,
+    ]) {
+      var calls = 0;
+      final store = _FakeThemeStore(throwOnRead: true);
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+        themeStore: store,
+        locationProvider: () {
+          calls++;
+          return result();
+        },
+      );
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+        ThemeMode.system,
+      );
+      tester.platformDispatcher.platformBrightnessTestValue = Brightness.dark;
+      await tester.pumpAndSettle();
+      expect(
+        tester
+            .widget<IconButton>(find.byKey(const Key('theme-toggle-button')))
+            .tooltip,
+        'Тема: Авто, тёмная',
+      );
+      tester.platformDispatcher.clearPlatformBrightnessTestValue();
+      await tester.pump(const Duration(minutes: 2));
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+      tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+      await tester.pumpAndSettle();
+      expect(calls, 1);
+      expect(store.writes, 0);
+      await tester.tap(find.byKey(const Key('theme-toggle-button')));
+      await tester.pumpAndSettle();
+      expect(
+        find.text('Местоположение недоступно — используется системная тема'),
+        findsOneWidget,
+      );
+      await tester.tap(find.byKey(const Key('theme-auto')));
+      await tester.pumpAndSettle();
+      expect(calls, 2);
+      expect(store.initial, ThemePreference.auto);
+      await tester.pump(const Duration(seconds: 11));
+      await tester.pumpAndSettle();
+    }
+  });
+
+  testWidgets(
+    'ручной режим игнорирует поздние координаты и не запрашивает новые',
+    (tester) async {
+      for (final preference in [ThemePreference.light, ThemePreference.dark]) {
+        var calls = 0;
+        final pending = Completer<ThemeLocation?>();
+        await _pump(
+          tester,
+          (r) async =>
+              r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+          locationProvider: () {
+            calls++;
+            return pending.future;
+          },
+        );
+        await _selectTheme(tester, preference.name);
+        pending.complete((latitude: 0.0, longitude: 0.0));
+        await tester.pumpAndSettle();
+        final expected = preference == ThemePreference.light
+            ? ThemeMode.light
+            : ThemeMode.dark;
+        expect(
+          tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+          expected,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.inactive,
+        );
+        tester.binding.handleAppLifecycleStateChanged(
+          AppLifecycleState.resumed,
+        );
+        await tester.pump(const Duration(minutes: 2));
+        expect(calls, 1);
+        await _pump(
+          tester,
+          (r) async =>
+              r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+          themeStore: _FakeThemeStore(initial: preference),
+          locationProvider: () async {
+            calls++;
+            return null;
+          },
+        );
+        expect(calls, 1);
+        expect(
+          tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+          expected,
+        );
+      }
+    },
+  );
+
+  testWidgets(
+    'меню закрывается без записи, работает с клавиатурой и возвращает фокус',
+    (tester) async {
+      final semantics = tester.ensureSemantics();
+      final store = _FakeThemeStore();
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+        themeStore: store,
+      );
+      final toggle = find.byKey(const Key('theme-toggle-button'));
+      final button = tester.widget<IconButton>(toggle);
+      button.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('theme-auto')), findsOneWidget);
+      await tester.sendKeyEvent(LogicalKeyboardKey.escape);
+      await tester.pumpAndSettle();
+      expect(button.focusNode!.hasFocus, isTrue);
+      expect(store.writes, 0);
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tapAt(const Offset(10, 10));
+      await tester.pumpAndSettle();
+      expect(store.writes, 0);
+      expect(find.byKey(const Key('theme-auto')), findsNothing);
+      button.focusNode!.requestFocus();
+      await tester.pump();
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(store.initial, ThemePreference.light);
+      expect(button.focusNode!.hasFocus, isTrue);
+      expect(
+        tester.getSemantics(toggle).getSemanticsData().tooltip,
+        'Тема: Светлая',
+      );
+      semantics.dispose();
+    },
+  );
+
+  testWidgets(
+    'после повторного Авто ручной выбор доступен во время и после геолокации',
+    (tester) async {
+      final store = _FakeThemeStore(initial: ThemePreference.light);
+      var pending = Completer<ThemeLocation?>();
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+        themeStore: store,
+        clock: () => DateTime.utc(2026, 9, 6, 12),
+        locationProvider: () => pending.future,
+      );
+      for (final manual in ['light', 'dark']) {
+        await _selectTheme(tester, 'auto');
+        await tester.tap(find.byKey(const Key('theme-toggle-button')));
+        await tester.pumpAndSettle();
+        pending.complete((latitude: 0.0, longitude: 0.0));
+        await tester.pumpAndSettle();
+        await tester.tap(find.byKey(Key('theme-$manual')));
+        await tester.pumpAndSettle();
+        expect(
+          store.initial,
+          manual == 'light' ? ThemePreference.light : ThemePreference.dark,
+        );
+        pending = Completer<ThemeLocation?>();
+        await _selectTheme(tester, 'auto');
+        await _selectTheme(tester, manual);
+        pending.complete(null);
+        await tester.pumpAndSettle();
+        expect(
+          store.initial,
+          manual == 'light' ? ThemePreference.light : ThemePreference.dark,
+        );
+        pending = Completer<ThemeLocation?>();
+      }
+    },
+  );
+
+  testWidgets('меню и шапка помещаются при 375 пикселях и увеличенном тексте', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    for (final mode in [
+      ThemePreference.light,
+      ThemePreference.dark,
+      ThemePreference.auto,
+    ]) {
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+        textScale: 2,
+        themeStore: _FakeThemeStore(initial: mode),
+      );
+      await tester.tap(find.byKey(const Key('theme-toggle-button')));
+      await tester.pumpAndSettle();
+      for (final name in ['auto', 'light', 'dark']) {
+        final rect = tester.getRect(find.byKey(Key('theme-$name')));
+        expect(rect.left, greaterThanOrEqualTo(0));
+        expect(rect.right, lessThanOrEqualTo(375));
+      }
+      expect(tester.takeException(), isNull);
+    }
   });
 }
 
@@ -1030,6 +1358,8 @@ Future<void> _pump(
   double textScale = 1,
   RateTablePreferencesStore? preferencesStore,
   ThemePreferenceStore? themeStore,
+  DateTime Function()? clock,
+  Future<ThemeLocation?> Function()? locationProvider,
 }) async {
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
@@ -1038,23 +1368,36 @@ Future<void> _pump(
     api: ExchangeRatesApi(client: MockClient(handler)),
     preferencesStore: preferencesStore,
     themeStore: themeStore,
+    clock: clock,
+    locationProvider: locationProvider,
   );
+  addTearDown(() async {
+    await tester.pumpWidget(const SizedBox());
+  });
   await tester.pumpWidget(app);
   if (settle) await tester.pumpAndSettle();
 }
 
 class _FakeThemeStore implements ThemePreferenceStore {
-  _FakeThemeStore({this.initial, this.throwOnWrite = false});
+  _FakeThemeStore({
+    this.initial,
+    this.throwOnWrite = false,
+    this.throwOnRead = false,
+  });
 
-  ThemeMode? initial;
+  ThemePreference? initial;
   final bool throwOnWrite;
+  final bool throwOnRead;
   int writes = 0;
 
   @override
-  ThemeMode? read() => initial;
+  ThemePreference? read() {
+    if (throwOnRead) throw StateError("read failed");
+    return initial;
+  }
 
   @override
-  void write(ThemeMode mode) {
+  void write(ThemePreference mode) {
     if (throwOnWrite) throw StateError('write failed');
     writes++;
     initial = mode;
@@ -1159,4 +1502,11 @@ http.Response _ratesFor(
         },
   ];
   return http.Response(jsonEncode(rows), 200);
+}
+
+Future<void> _selectTheme(WidgetTester tester, String mode) async {
+  await tester.tap(find.byKey(const Key('theme-toggle-button')));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(Key('theme-$mode')));
+  await tester.pumpAndSettle();
 }

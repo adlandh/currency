@@ -1,23 +1,17 @@
-import 'package:flutter/material.dart';
-
 const themePreferenceKey = 'currency.theme.v1';
 
-ThemeMode? decodeThemePreference(String? source) {
-  switch (source) {
-    case 'light':
-      return ThemeMode.light;
-    case 'dark':
-      return ThemeMode.dark;
-    default:
-      return null;
-  }
-}
+enum ThemePreference { auto, light, dark }
 
-String encodeThemePreference(ThemeMode mode) =>
-    mode == ThemeMode.dark ? 'dark' : 'light';
+ThemePreference? decodeThemePreference(String? source) => switch (source) {
+  'auto' => ThemePreference.auto,
+  'light' => ThemePreference.light,
+  'dark' => ThemePreference.dark,
+  _ => null,
+};
+
+String encodeThemePreference(ThemePreference mode) => mode.name;
 
 abstract interface class ThemePreferenceStore {
-  ThemeMode? read();
-
-  void write(ThemeMode mode);
+  ThemePreference? read();
+  void write(ThemePreference mode);
 }

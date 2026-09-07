@@ -6,26 +6,30 @@ import 'package:intl/intl.dart';
 import 'conversion.dart';
 import 'exchange_rates.dart';
 import 'rate_table_preferences.dart';
+import 'theme_preference.dart';
 
 class CurrencyPage extends StatefulWidget {
   const CurrencyPage({
     super.key,
     required this.api,
     required this.preferencesStore,
-    required this.themeMode,
+    required this.themePreference,
+    this.themeStatus,
     required this.onThemeChanged,
   });
 
   final ExchangeRatesApi api;
   final RateTablePreferencesStore preferencesStore;
-  final ThemeMode themeMode;
-  final ValueChanged<ThemeMode> onThemeChanged;
+  final ThemePreference themePreference;
+  final String? themeStatus;
+  final ValueChanged<ThemePreference> onThemeChanged;
 
   @override
   State<CurrencyPage> createState() => _CurrencyPageState();
 }
 
 class _CurrencyPageState extends State<CurrencyPage> {
+  final _themeFocus = FocusNode();
   final _amountController = TextEditingController(text: '1');
 
   List<CurrencyInfo> _currencies = const [];
@@ -61,6 +65,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
   void dispose() {
     _catalogRequest++;
     _tableRequest++;
+    _themeFocus.dispose();
     _amountController.dispose();
     super.dispose();
   }
@@ -282,31 +287,75 @@ class _CurrencyPageState extends State<CurrencyPage> {
   }
 
   Widget _buildHeader(BuildContext context) {
-    final isDark = widget.themeMode == ThemeMode.dark;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final label = switch (widget.themePreference) {
+      ThemePreference.auto => 'Авто, ${isDark ? 'тёмная' : 'светлая'}',
+      ThemePreference.light => 'Светлая',
+      ThemePreference.dark => 'Тёмная',
+    };
     return Wrap(
       spacing: 8,
       runSpacing: 12,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Text(
-          'Курсы валют',
-          style: Theme.of(context).textTheme.displaySmall,
-        ),
+        Text('Курсы валют', style: Theme.of(context).textTheme.displaySmall),
         IconButton(
           key: const Key('refresh-button'),
           onPressed: _refreshAll,
           tooltip: 'Обновить',
           icon: const Icon(Icons.refresh_rounded, size: 20),
         ),
-        IconButton(
-          key: const Key('theme-toggle-button'),
-          onPressed: () => widget.onThemeChanged(
-            isDark ? ThemeMode.light : ThemeMode.dark,
-          ),
-          tooltip: isDark ? 'Светлая тема' : 'Тёмная тема',
-          icon: Icon(
-            isDark ? Icons.light_mode_rounded : Icons.dark_mode_rounded,
-            size: 22,
+        MenuAnchor(
+          childFocusNode: _themeFocus,
+          onClose: () => _themeFocus.requestFocus(),
+          menuChildren: [
+            for (final (preference, title) in const [
+              (ThemePreference.auto, 'Авто'),
+              (ThemePreference.light, 'Светлая'),
+              (ThemePreference.dark, 'Тёмная'),
+            ])
+              MenuItemButton(
+                key: Key('theme-${preference.name}'),
+                autofocus: preference == ThemePreference.auto,
+                onPressed: () => widget.onThemeChanged(preference),
+                leadingIcon: SizedBox(
+                  width: 24,
+                  child: widget.themePreference == preference
+                      ? const Icon(Icons.check, size: 20)
+                      : null,
+                ),
+                child: Semantics(
+                  selected: widget.themePreference == preference,
+                  child: Text(title),
+                ),
+              ),
+            if (widget.themePreference == ThemePreference.auto &&
+                widget.themeStatus != null)
+              SizedBox(
+                width: 260,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Semantics(
+                    liveRegion: true,
+                    child: Text(
+                      widget.themeStatus!,
+                      style: Theme.of(context).textTheme.bodyMedium,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+          builder: (context, controller, child) => IconButton(
+            key: const Key('theme-toggle-button'),
+            focusNode: _themeFocus,
+            onPressed: () =>
+                controller.isOpen ? controller.close() : controller.open(),
+            tooltip: 'Тема: $label',
+            icon: Icon(switch (widget.themePreference) {
+              ThemePreference.auto => Icons.brightness_auto_rounded,
+              ThemePreference.light => Icons.light_mode_rounded,
+              ThemePreference.dark => Icons.dark_mode_rounded,
+            }, size: 22),
           ),
         ),
       ],
@@ -753,7 +802,10 @@ class _FailureBanner extends StatelessWidget {
           runSpacing: 12,
           crossAxisAlignment: WrapCrossAlignment.center,
           children: [
-            Icon(Icons.error_outline_rounded, color: colorScheme.onErrorContainer),
+            Icon(
+              Icons.error_outline_rounded,
+              color: colorScheme.onErrorContainer,
+            ),
             Text(message),
             TextButton(onPressed: onRetry, child: const Text('Повторить')),
           ],
@@ -796,15 +848,16 @@ class _EmptyRates extends StatelessWidget {
     return Container(
       key: const Key('empty-rates'),
       decoration: BoxDecoration(
-        border: Border.all(
-          color: Theme.of(context).colorScheme.outlineVariant,
-        ),
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(10),
       ),
       padding: const EdgeInsets.all(24),
       child: Row(
         children: [
-          Icon(Icons.add_chart_rounded, color: Theme.of(context).colorScheme.primary),
+          Icon(
+            Icons.add_chart_rounded,
+            color: Theme.of(context).colorScheme.primary,
+          ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(

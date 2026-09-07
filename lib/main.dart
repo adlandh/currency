@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/intl.dart';
@@ -6,6 +8,8 @@ import 'currency_page.dart';
 import 'exchange_rates.dart';
 import 'rate_table_preferences.dart';
 import 'rate_table_preferences_store.dart';
+import 'solar_theme.dart';
+import 'theme_location.dart';
 import 'theme_preference.dart';
 import 'theme_preference_store.dart';
 
@@ -20,12 +24,18 @@ class CurrencyApp extends StatefulWidget {
     required this.api,
     RateTablePreferencesStore? preferencesStore,
     ThemePreferenceStore? themeStore,
+    DateTime Function()? clock,
+    Future<ThemeLocation?> Function()? locationProvider,
   }) : preferencesStore = preferencesStore ?? createRateTablePreferencesStore(),
-       themeStore = themeStore ?? createThemePreferenceStore();
+       themeStore = themeStore ?? createThemePreferenceStore(),
+       clock = clock ?? DateTime.now,
+       locationProvider = locationProvider ?? getThemeLocation;
 
   final ExchangeRatesApi api;
   final RateTablePreferencesStore preferencesStore;
   final ThemePreferenceStore themeStore;
+  final DateTime Function() clock;
+  final Future<ThemeLocation?> Function() locationProvider;
 
   @override
   State<CurrencyApp> createState() => _CurrencyAppState();
@@ -33,24 +43,123 @@ class CurrencyApp extends StatefulWidget {
 
 const _appAccent = Color(0xFF285C4D);
 
-class _CurrencyAppState extends State<CurrencyApp> {
-  ThemeMode _themeMode = ThemeMode.light;
+class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
+  ThemePreference _preference = ThemePreference.auto;
+  ThemeMode _themeMode = ThemeMode.system;
+  ThemeLocation? _location;
+  String? _locationStatus;
+  Timer? _timer;
+  int _generation = 0;
+  bool _requestPending = false;
+  bool _locationFailed = false;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     try {
-      _themeMode = widget.themeStore.read() ?? ThemeMode.light;
-    } catch (_) {
-      _themeMode = ThemeMode.light;
+      _preference = widget.themeStore.read() ?? ThemePreference.auto;
+    } catch (_) {}
+    _applyPreference();
+  }
+
+  void _setThemePreference(ThemePreference preference) {
+    setState(() {
+      _preference = preference;
+      _applyPreference();
+    });
+    try {
+      widget.themeStore.write(preference);
+    } catch (_) {}
+  }
+
+  void _applyPreference() {
+    _generation++;
+    _timer?.cancel();
+    _timer = null;
+    _locationFailed = false;
+    if (_preference == ThemePreference.auto) {
+      _recalculate();
+      // ponytail: до минуты задержки; точный таймер нужен для секундной границы.
+      _timer = Timer.periodic(
+        const Duration(minutes: 1),
+        (_) => _recalculate(),
+      );
+      unawaited(_refreshLocation());
+    } else {
+      _themeMode = _preference == ThemePreference.dark
+          ? ThemeMode.dark
+          : ThemeMode.light;
+      _locationStatus = null;
     }
   }
 
-  void _setThemeMode(ThemeMode mode) {
-    setState(() => _themeMode = mode);
+  void _recalculate() {
+    if (_preference != ThemePreference.auto) return;
+    final day = _location == null
+        ? null
+        : isSolarDay(widget.clock(), _location!);
+    final mode = day == null
+        ? ThemeMode.system
+        : (day ? ThemeMode.light : ThemeMode.dark);
+    final status = _location != null && day == null
+        ? 'Не удалось определить день и ночь — используется системная тема'
+        : (_requestPending || _location == null ? _locationStatus : null);
+    if (mode != _themeMode || status != _locationStatus) {
+      setState(() {
+        _themeMode = mode;
+        _locationStatus = status;
+      });
+    }
+  }
+
+  Future<void> _refreshLocation() async {
+    if (_requestPending ||
+        _locationFailed ||
+        _preference != ThemePreference.auto) {
+      return;
+    }
+    final generation = _generation;
+    _requestPending = true;
+    setState(() => _locationStatus = 'Определяем местоположение');
+    ThemeLocation? location;
     try {
-      widget.themeStore.write(mode);
+      location = await widget.locationProvider().timeout(
+        const Duration(seconds: 10),
+      );
+      if (location != null && !validThemeLocation(location)) location = null;
     } catch (_) {}
+    _requestPending = false;
+    if (!mounted) return;
+    if (generation != _generation) {
+      if (_preference == ThemePreference.auto) unawaited(_refreshLocation());
+      return;
+    }
+    setState(() {
+      _location = location;
+      _locationFailed = location == null;
+      _locationStatus = location == null
+          ? 'Местоположение недоступно — используется системная тема'
+          : null;
+    });
+    _recalculate();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed &&
+        _preference == ThemePreference.auto) {
+      _recalculate();
+      unawaited(_refreshLocation());
+    }
+  }
+
+  @override
+  void dispose() {
+    _generation++;
+    _timer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
   }
 
   @override
@@ -82,8 +191,9 @@ class _CurrencyAppState extends State<CurrencyApp> {
       home: CurrencyPage(
         api: widget.api,
         preferencesStore: widget.preferencesStore,
-        themeMode: _themeMode,
-        onThemeChanged: _setThemeMode,
+        themePreference: _preference,
+        themeStatus: _locationStatus,
+        onThemeChanged: _setThemePreference,
       ),
     );
   }
@@ -162,9 +272,7 @@ class _CurrencyAppState extends State<CurrencyApp> {
       elevatedButtonTheme: ElevatedButtonThemeData(
         style: ElevatedButton.styleFrom(
           minimumSize: const Size(48, 48),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       outlinedButtonTheme: OutlinedButtonThemeData(
@@ -174,9 +282,7 @@ class _CurrencyAppState extends State<CurrencyApp> {
           side: BorderSide(
             color: isLight ? const Color(0xFF71867E) : colors.outline,
           ),
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
       iconButtonTheme: IconButtonThemeData(

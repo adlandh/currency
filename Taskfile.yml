@@ -1,5 +1,7 @@
 version: '3'
 
+dotenv: ['.env']
+
 tasks:
   serve:
     desc: Запустить Flutter Web-сервер на http://localhost:8080
@@ -15,3 +17,14 @@ tasks:
     desc: Запустить тесты
     cmds:
       - flutter test
+
+  build:
+    desc: Собрать Flutter Web-приложение
+    cmds:
+      - flutter build web --release
+
+  deploy:
+    desc: Развернуть Web-приложение на сервере
+    deps: [build]
+    cmds:
+      - scp -r build/web/* {{.TARGET}}

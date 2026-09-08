@@ -55,6 +55,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
     super.initState();
     try {
       _savedPreferences = widget.preferencesStore.read();
+      _amountController.text = _savedPreferences?.amount ?? '1';
     } catch (_) {
       _preferencesNotice = 'Не удалось восстановить настройки. Используются значения по умолчанию.';
     }
@@ -198,9 +199,14 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   void _persistRateTablePreferences({bool clearNoticeOnSuccess = true}) {
     final base = _base;
+    final enteredAmount = _amountController.text;
+    final amount = parseAmount(enteredAmount).status == AmountStatus.valid
+        ? enteredAmount.trim()
+        : _savedPreferences?.amount ?? '1';
     final preferences = RateTablePreferences(
       base: base,
       targets: List<String>.of(_targets),
+      amount: amount,
     );
     _savedPreferences = preferences;
     try {
@@ -387,7 +393,13 @@ class _CurrencyPageState extends State<CurrencyPage> {
                 : null,
             errorMaxLines: 3,
           ),
-          onChanged: (_) => setState(() {}),
+          onChanged: (_) {
+            setState(() {});
+            if (parseAmount(_amountController.text).status ==
+                AmountStatus.valid) {
+              _persistRateTablePreferences();
+            }
+          },
         ),
         const SizedBox(height: 16),
         const Text(

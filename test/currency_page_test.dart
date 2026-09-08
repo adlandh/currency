@@ -363,12 +363,13 @@ void main() {
   testWidgets(
     'показывает начальные курсы и пересчитывает сумму без нового запроса',
     (tester) async {
+      final store = _FakePreferencesStore();
       var rateCalls = 0;
       await _pump(tester, (request) async {
         if (request.url.path.endsWith('/currencies')) return _catalog();
         rateCalls++;
         return _rates(request);
-      });
+      }, preferencesStore: store);
 
       expect(find.text('Курсы валют'), findsOneWidget);
       expect(find.byKey(const Key('rate-row-USD')), findsOneWidget);
@@ -407,10 +408,15 @@ void main() {
       expect(_text(tester, const Key('reverse-result-USD')), '2 500,00 EUR');
       expect(_text(tester, const Key('reverse-result-CZK')), '120,00 EUR');
       expect(_text(tester, const Key('reverse-result-GBP')), '3 750,00 EUR');
+      expect(store.value?.amount, '3 000');
       await tester.enterText(amountField, '100');
       await tester.pump();
       expect(_text(tester, const Key('conversion-result-CZK')), '2 500,00 CZK');
       expect(_text(tester, const Key('reverse-result-CZK')), '4,00 EUR');
+      expect(store.value?.amount, '100');
+      await tester.enterText(amountField, '3,000.50');
+      await tester.pump();
+      expect(store.value?.amount, '100');
       expect(callsBeforeTyping, 1);
       expect(rateCalls, callsBeforeTyping);
       expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
@@ -603,7 +609,11 @@ void main() {
     tester,
   ) async {
     final store = _FakePreferencesStore(
-      value: const RateTablePreferences(base: 'CZK', targets: ['JPY', 'USD']),
+      value: const RateTablePreferences(
+        base: 'CZK',
+        targets: ['JPY', 'USD'],
+        amount: '12,3456',
+      ),
     );
     final rateRequests = <Uri>[];
 
@@ -625,13 +635,14 @@ void main() {
       lessThan(tester.getTopLeft(find.byKey(const Key('rate-row-USD'))).dy),
     );
     expect(rateRequests.length, 1);
-    expect(_text(tester, const Key('conversion-result-JPY')), '160 JPY');
+    expect(_text(tester, const Key('conversion-result-JPY')), '1 975 JPY');
+    expect(_text(tester, const Key('reverse-result-JPY')), '0,08 EUR');
     expect(
       tester
           .widget<TextField>(find.byKey(const Key('amount-field')))
           .controller!
           .text,
-      '1',
+      '12,3456',
     );
   });
 
@@ -672,6 +683,10 @@ void main() {
       }
 
       await _pump(tester, handler, preferencesStore: store);
+      await tester.enterText(find.byKey(const Key('amount-field')), '25');
+      await tester.pump();
+      await tester.enterText(find.byKey(const Key('amount-field')), '3,000.50');
+      await tester.pump();
       await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
       await tester.pumpAndSettle();
       final remove = find.byKey(const Key('remove-GBP'));
@@ -682,11 +697,19 @@ void main() {
       expect(find.textContaining('ошибку 503'), findsOneWidget);
       expect(store.value?.base, 'EUR');
       expect(store.value?.targets, ['USD', 'CZK', 'JPY']);
+      expect(store.value?.amount, '25');
 
       failRates = false;
       await _pump(tester, handler, preferencesStore: store);
       expect(find.byKey(const Key('rate-row-GBP')), findsNothing);
       expect(find.byKey(const Key('rate-row-JPY')), findsOneWidget);
+      expect(
+        tester
+            .widget<TextField>(find.byKey(const Key('amount-field')))
+            .controller!
+            .text,
+        '25',
+      );
       expect(find.textContaining('1 EUR ='), findsWidgets);
     },
   );
@@ -1429,6 +1452,7 @@ class _FakePreferencesStore implements RateTablePreferencesStore {
     value = RateTablePreferences(
       base: preferences.base,
       targets: List<String>.of(preferences.targets),
+      amount: preferences.amount,
     );
   }
 }

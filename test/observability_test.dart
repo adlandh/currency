@@ -15,7 +15,16 @@ import 'package:sentry_flutter/sentry_flutter.dart';
 
 class RecordingTransport implements Transport {
   final events = <Map<String, dynamic>>[];
+  Completer<void>? _eventRecorded;
   bool fail = false;
+
+  Future<void> waitForEvents(int count) async {
+    while (events.length < count) {
+      _eventRecorded = Completer<void>();
+      await _eventRecorded!.future;
+    }
+  }
+
   @override
   Future<SentryId?> send(SentryEnvelope envelope) async {
     if (fail) throw StateError('transport unavailable');
@@ -23,7 +32,11 @@ class RecordingTransport implements Transport {
       final data = jsonDecode(
         utf8.decode(await item.dataFactory()),
       ) as Map<String, dynamic>;
-      if (data.containsKey('event_id')) events.add(data);
+      if (data.containsKey('event_id')) {
+        events.add(data);
+        _eventRecorded?.complete();
+        _eventRecorded = null;
+      }
     }
     return envelope.header.eventId;
   }
@@ -136,7 +149,7 @@ void main() {
         api.fetchCurrencies(),
         throwsA(isA<ExchangeRatesException>()),
       );
-      await Future<void>.delayed(Duration.zero);
+      await transport.waitForEvents(2);
       final errors = transport.events
           .where((event) => event['type'] != 'transaction')
           .toList();
@@ -175,7 +188,7 @@ void main() {
     await api.fetchRates('EUR', ['USD']);
     pending.complete(http.Response('bad', 500));
     await expectLater(currencies, throwsA(isA<ExchangeRatesException>()));
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(3);
     final transactions = transport.events
         .where((e) => e['type'] == 'transaction')
         .toList();
@@ -218,7 +231,7 @@ void main() {
       api.fetchCurrencies(),
       throwsA(isA<ExchangeRatesException>()),
     );
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(1);
     expect(transport.events, hasLength(1));
     expect(transport.events.single['type'], isNot('transaction'));
   });
@@ -254,7 +267,7 @@ void main() {
         ],
       ),
     );
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(1);
     expect(transport.events, hasLength(1));
     expect(jsonEncode(transport.events), isNot(contains(secret)));
     expect(transport.events.single['release'], 'currency@test');
@@ -270,7 +283,7 @@ void main() {
         once: true,
       );
     }
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(1);
     expect(transport.events, hasLength(1));
     transport.fail = true;
     await reportError(StateError('storage'), StackTrace.current, 'theme.read');
@@ -308,6 +321,7 @@ void main() {
     }
     await tester.enterText(find.byKey(const Key('amount-field')), '987654');
     await tester.pumpAndSettle();
+    await transport.waitForEvents(4);
     final operations = transport.events
         .where((e) => e['exception'] != null)
         .map((e) => e['tags']['operation'])
@@ -347,6 +361,7 @@ void main() {
           ),
         );
         await tester.pumpAndSettle();
+        if (unexpected) await transport.waitForEvents(1);
         expect(
           tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
           ThemeMode.system,
@@ -370,7 +385,7 @@ void main() {
         isNull,
       );
     }
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(1);
     expect(transport.events, hasLength(1));
     expect(transport.events.single['tags']['operation'], 'theme.calculate');
   });
@@ -386,7 +401,7 @@ void main() {
     final child = manual.startChild('private', description: 'SENSITIVE_987654');
     await child.finish();
     await manual.finish();
-    await Future<void>.delayed(Duration.zero);
+    await transport.waitForEvents(1);
     expect(transport.events, hasLength(1));
     expect(transport.events.single['transaction'], 'rates.load');
     expect(jsonEncode(transport.events), isNot(contains('SENSITIVE_987654')));

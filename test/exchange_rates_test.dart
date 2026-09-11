@@ -102,4 +102,26 @@ void main() {
       ),
     );
   });
+  test('сохраняет исходную сетевую причину и стек для диагностики', () async {
+    final cause = http.ClientException('network');
+    final stack = StackTrace.current;
+    final api = ExchangeRatesApi(
+      client: MockClient((_) async {
+        Error.throwWithStackTrace(cause, stack);
+      }),
+    );
+    await expectLater(
+      api.fetchCurrencies(),
+      throwsA(
+        isA<ExchangeRatesException>()
+            .having((e) => e.cause, 'cause', same(cause))
+            .having((e) => e.causeStack.toString(), 'stack', stack.toString())
+            .having(
+              (e) => e.message,
+              'message',
+              'Не удалось связаться с источником курсов.',
+            ),
+      ),
+    );
+  });
 }

@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 
 import 'currency_page.dart';
 import 'exchange_rates.dart';
+import 'observability.dart';
 import 'rate_table_preferences.dart';
 import 'rate_table_preferences_store.dart';
 import 'solar_theme.dart';
@@ -13,10 +14,10 @@ import 'theme_location.dart';
 import 'theme_preference.dart';
 import 'theme_preference_store.dart';
 
-void main() {
+Future<void> main() => runWithObservability(() {
   Intl.defaultLocale = 'ru_RU';
   runApp(CurrencyApp(api: ExchangeRatesApi()));
-}
+});
 
 class CurrencyApp extends StatefulWidget {
   CurrencyApp({
@@ -59,7 +60,9 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     try {
       _preference = widget.themeStore.read() ?? ThemePreference.auto;
-    } catch (_) {}
+    } catch (error, stack) {
+      unawaited(reportError(error, stack, 'theme.read', once: true));
+    }
     _applyPreference();
   }
 
@@ -70,7 +73,9 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
     });
     try {
       widget.themeStore.write(preference);
-    } catch (_) {}
+    } catch (error, stack) {
+      unawaited(reportError(error, stack, 'theme.write', once: true));
+    }
   }
 
   void _applyPreference() {
@@ -128,7 +133,11 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
         const Duration(seconds: 10),
       );
       if (location != null && !validThemeLocation(location)) location = null;
-    } catch (_) {}
+    } on TimeoutException {
+      // Недоступная геолокация — штатное резервное поведение.
+    } catch (error, stack) {
+      unawaited(reportError(error, stack, 'theme.location'));
+    }
     _requestPending = false;
     if (!mounted) return;
     if (generation != _generation) {

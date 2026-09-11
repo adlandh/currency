@@ -2,11 +2,18 @@ version: '3'
 
 dotenv: ['.env']
 
+vars:
+  SENTRY_FLAGS: >-
+    --dart-define={{printf "SENTRY_DSN=%s" (.SENTRY_DSN | default "") | shellQuote}}
+    --dart-define={{printf "SENTRY_ENVIRONMENT=%s" (.SENTRY_ENVIRONMENT | default "") | shellQuote}}
+    --dart-define={{printf "SENTRY_RELEASE=%s" (.SENTRY_RELEASE | default "") | shellQuote}}
+    --dart-define={{printf "SENTRY_TRACES_SAMPLE_RATE=%s" (.SENTRY_TRACES_SAMPLE_RATE | default "0.1") | shellQuote}}
+
 tasks:
   serve:
     desc: Запустить Flutter Web-сервер на http://localhost:8080
     cmds:
-      - flutter run -d web-server
+      - flutter run -d web-server {{.SENTRY_FLAGS}}
 
   lint:
     desc: Запустить статический анализ Dart
@@ -21,7 +28,7 @@ tasks:
   build:
     desc: Собрать Flutter Web-приложение
     cmds:
-      - flutter build web --release
+      - flutter build web --release {{.SENTRY_FLAGS}}
 
   deploy:
     desc: Развернуть Web-приложение на сервере

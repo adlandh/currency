@@ -3,6 +3,8 @@ import 'dart:convert';
 
 import 'package:http/http.dart' as http;
 
+import 'observability.dart';
+
 class CurrencyInfo {
   const CurrencyInfo({required this.code, required this.name});
 
@@ -33,13 +35,13 @@ class ExchangeRate {
   final DateTime date;
 }
 
-class ExchangeRatesException implements Exception {
-  const ExchangeRatesException(this.message);
-
-  final String message;
-
-  @override
-  String toString() => message;
+class ExchangeRatesException extends ObservedException {
+  const ExchangeRatesException(
+    super.message, {
+    super.cause,
+    super.causeStack,
+    super.httpStatus,
+  });
 }
 
 class ExchangeRatesApi {
@@ -54,25 +56,26 @@ class ExchangeRatesApi {
   final Uri _baseUri;
   final Duration timeout;
 
-  Future<List<CurrencyInfo>> fetchCurrencies() async {
-    final response = await _get(_baseUri.resolve('currencies'));
-    final decoded = _decodeList(response.body, 'каталог валют');
-    final currencies = <CurrencyInfo>[];
+  Future<List<CurrencyInfo>> fetchCurrencies() =>
+      traceOperation('currencies.load', () async {
+        final response = await _get(_baseUri.resolve('currencies'));
+        final decoded = _decodeList(response.body, 'каталог валют');
+        final currencies = <CurrencyInfo>[];
 
-    for (final item in decoded) {
-      final code = item['iso_code'];
-      final name = item['name'];
-      if (code is String &&
-          RegExp(r'^[A-Z]{3}$').hasMatch(code) &&
-          name is String &&
-          name.trim().isNotEmpty) {
-        currencies.add(CurrencyInfo(code: code, name: name.trim()));
-      }
-    }
+        for (final item in decoded) {
+          final code = item['iso_code'];
+          final name = item['name'];
+          if (code is String &&
+              RegExp(r'^[A-Z]{3}$').hasMatch(code) &&
+              name is String &&
+              name.trim().isNotEmpty) {
+            currencies.add(CurrencyInfo(code: code, name: name.trim()));
+          }
+        }
 
-    currencies.sort((a, b) => a.code.compareTo(b.code));
-    return currencies;
-  }
+        currencies.sort((a, b) => a.code.compareTo(b.code));
+        return currencies;
+      });
 
   Future<Map<String, ExchangeRate>> fetchRates(
     String base,
@@ -81,56 +84,65 @@ class ExchangeRatesApi {
     final requested = quotes.where((quote) => quote != base).toSet();
     if (requested.isEmpty) return const {};
 
-    final uri = _baseUri
-        .resolve('rates')
-        .replace(
-          queryParameters: {'base': base, 'quotes': requested.join(',')},
-        );
-    final response = await _get(uri);
-    final decoded = _decodeList(response.body, 'курсы валют');
-    final rates = <String, ExchangeRate>{};
+    return traceOperation('rates.load', () async {
+      final uri = _baseUri
+          .resolve('rates')
+          .replace(
+            queryParameters: {'base': base, 'quotes': requested.join(',')},
+          );
+      final response = await _get(uri);
+      final decoded = _decodeList(response.body, 'курсы валют');
+      final rates = <String, ExchangeRate>{};
 
-    for (final item in decoded) {
-      final responseBase = item['base'];
-      final quote = item['quote'];
-      final value = item['rate'];
-      final dateValue = item['date'];
-      final date = dateValue is String ? DateTime.tryParse(dateValue) : null;
-      final rate = value is num ? value.toDouble() : null;
-      if (responseBase == base &&
-          quote is String &&
-          requested.contains(quote) &&
-          rate != null &&
-          rate.isFinite &&
-          rate > 0 &&
-          date != null) {
-        rates[quote] = ExchangeRate(
-          base: base,
-          quote: quote,
-          rate: rate,
-          date: DateTime.utc(date.year, date.month, date.day),
-        );
+      for (final item in decoded) {
+        final responseBase = item['base'];
+        final quote = item['quote'];
+        final value = item['rate'];
+        final dateValue = item['date'];
+        final date = dateValue is String ? DateTime.tryParse(dateValue) : null;
+        final rate = value is num ? value.toDouble() : null;
+        if (responseBase == base &&
+            quote is String &&
+            requested.contains(quote) &&
+            rate != null &&
+            rate.isFinite &&
+            rate > 0 &&
+            date != null) {
+          rates[quote] = ExchangeRate(
+            base: base,
+            quote: quote,
+            rate: rate,
+            date: DateTime.utc(date.year, date.month, date.day),
+          );
+        }
       }
-    }
 
-    return rates;
+      return rates;
+    });
   }
 
   Future<http.Response> _get(Uri uri) async {
     late final http.Response response;
     try {
       response = await _client.get(uri).timeout(timeout);
-    } on TimeoutException {
-      throw const ExchangeRatesException('Источник курсов не ответил вовремя.');
-    } on Exception {
-      throw const ExchangeRatesException(
+    } on TimeoutException catch (error, stack) {
+      throw ExchangeRatesException(
+        'Источник курсов не ответил вовремя.',
+        cause: error,
+        causeStack: stack,
+      );
+    } on Exception catch (error, stack) {
+      throw ExchangeRatesException(
         'Не удалось связаться с источником курсов.',
+        cause: error,
+        causeStack: stack,
       );
     }
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw ExchangeRatesException(
         'Источник курсов вернул ошибку ${response.statusCode}.',
+        httpStatus: response.statusCode,
       );
     }
     return response;
@@ -144,8 +156,12 @@ class ExchangeRatesApi {
         if (item is! Map<String, dynamic>) throw const FormatException();
         return item.cast<String, Object?>();
       }).toList();
-    } on FormatException {
-      throw ExchangeRatesException('Получен некорректный ответ: $resource.');
+    } on FormatException catch (error, stack) {
+      throw ExchangeRatesException(
+        'Получен некорректный ответ: $resource.',
+        cause: error,
+        causeStack: stack,
+      );
     }
   }
 }

@@ -4,6 +4,7 @@ import 'dart:js_interop';
 import 'package:web/web.dart';
 
 import 'theme_location.dart';
+import 'observability.dart';
 
 Future<ThemeLocation?> getThemeLocation() async {
   final result = Completer<ThemeLocation?>();
@@ -31,7 +32,8 @@ Future<ThemeLocation?> getThemeLocation() async {
       const Duration(seconds: 10),
       onTimeout: () => null,
     );
-  } catch (_) {
+  } catch (error, stack) {
+    unawaited(reportError(error, stack, 'theme.location', once: true));
     return null;
   }
 }

@@ -37,6 +37,7 @@ dependencies:
   intl: ^0.20.2
   web: ^1.1.1
   nrel_spa: ^1.2.0
+  sentry_flutter: ^9.30.0
 
 dev_dependencies:
   flutter_test:

@@ -5,6 +5,7 @@ import 'package:intl/intl.dart';
 
 import 'conversion.dart';
 import 'exchange_rates.dart';
+import 'observability.dart';
 import 'rate_table_preferences.dart';
 import 'theme_preference.dart';
 
@@ -56,7 +57,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
     try {
       _savedPreferences = widget.preferencesStore.read();
       _amountController.text = _savedPreferences?.amount ?? '1';
-    } catch (_) {
+    } catch (error, stack) {
+      unawaited(reportError(error, stack, 'preferences.read', once: true));
       _preferencesNotice = 'Не удалось восстановить настройки. Используются значения по умолчанию.';
     }
     unawaited(_loadCurrencies());
@@ -214,7 +216,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
       if (clearNoticeOnSuccess && _preferencesNotice != null) {
         setState(() => _preferencesNotice = null);
       }
-    } catch (_) {
+    } catch (error, stack) {
+      unawaited(reportError(error, stack, 'preferences.write', once: true));
       const message =
           'Не удалось сохранить настройки. Текущий выбор останется только до закрытия страницы.';
       if (_preferencesNotice != message) {

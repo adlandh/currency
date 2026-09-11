@@ -214,21 +214,19 @@ Future<T> traceOperation<T>(
   } catch (error, stack) {
     span.status = const SpanStatus.internalError();
     if (error is ObservedException) {
-      unawaited(
-        reportError(
-          error.cause ?? error,
-          error.causeStack ?? stack,
-          operation,
-          span: span,
-          httpStatus: error.httpStatus,
-        ),
+      await reportError(
+        error.cause ?? error,
+        error.causeStack ?? stack,
+        operation,
+        span: span,
+        httpStatus: error.httpStatus,
       );
     } else {
-      unawaited(reportError(error, stack, operation, span: span));
+      await reportError(error, stack, operation, span: span);
     }
     rethrow;
   } finally {
-    unawaited(_finish(span));
+    await _finish(span);
   }
 }
 

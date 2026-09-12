@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -167,13 +168,10 @@ class _CurrencyPageState extends State<CurrencyPage> {
   }
 
   bool _tableRequestIsCurrent(int request, List<String> targets) {
-    return mounted && request == _tableRequest && _sameItems(targets, _targets);
+    return mounted &&
+        request == _tableRequest &&
+        setEquals(targets.toSet(), _targets.toSet());
   }
-
-  bool _sameItems(List<String> left, List<String> right) =>
-      left.length == right.length &&
-      Iterable.generate(left.length)
-          .every((index) => left[index] == right[index]);
 
   Future<void> _refreshAll() async {
     if (_catalogError != null || _currencies.isEmpty) {
@@ -197,6 +195,17 @@ class _CurrencyPageState extends State<CurrencyPage> {
     setState(() => _targets = _targets.where((code) => code != value).toList());
     _persistRateTablePreferences();
     unawaited(_loadTableRates());
+  }
+
+  void _moveTarget(String code, int direction) {
+    final index = _targets.indexOf(code);
+    final destination = index + direction;
+    if (index < 0 || destination < 0 || destination >= _targets.length) return;
+    final targets = List<String>.of(_targets);
+    targets[index] = targets[destination];
+    targets[destination] = code;
+    setState(() => _targets = targets);
+    _persistRateTablePreferences();
   }
 
   void _persistRateTablePreferences({bool clearNoticeOnSuccess = true}) {
@@ -435,55 +444,64 @@ class _CurrencyPageState extends State<CurrencyPage> {
                   final compact =
                       constraints.maxWidth < 900 ||
                       MediaQuery.textScalerOf(context).scale(17) > 25;
-                  return Column(
-                    children: [
-                      if (!compact) ...[
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
-                          child: Row(
-                            children: [
-                              Expanded(flex: 3, child: Text('Валюта')),
-                              SizedBox(width: 20),
-                              Expanded(flex: 4, child: Text('Курс')),
-                              SizedBox(width: 20),
-                              Expanded(
-                                flex: 3,
-                                child: Text(
-                                  'EUR → валюта',
-                                  textAlign: TextAlign.right,
+                  return FocusTraversalGroup(
+                    policy: ReadingOrderTraversalPolicy(),
+                    child: Column(
+                      children: [
+                        if (!compact) ...[
+                          const Padding(
+                            padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
+                            child: Row(
+                              children: [
+                                Expanded(flex: 3, child: Text('Валюта')),
+                                SizedBox(width: 20),
+                                Expanded(flex: 4, child: Text('Курс')),
+                                SizedBox(width: 20),
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(
+                                    'EUR → валюта',
+                                    textAlign: TextAlign.right,
+                                  ),
                                 ),
-                              ),
-                              SizedBox(width: 20),
-                              Expanded(
-                                flex: 3,
-                                child: Text(
-                                  'Валюта → EUR',
-                                  textAlign: TextAlign.right,
+                                SizedBox(width: 20),
+                                Expanded(
+                                  flex: 3,
+                                  child: Text(
+                                    'Валюта → EUR',
+                                    textAlign: TextAlign.right,
+                                  ),
                                 ),
-                              ),
-                              SizedBox(width: 56),
-                            ],
+                                SizedBox(width: 152),
+                              ],
+                            ),
                           ),
-                        ),
-                        const Divider(height: 1),
+                          const Divider(height: 1),
+                        ],
+                        for (final (index, code) in _targets.indexed) ...[
+                          RateRow(
+                            key: Key('rate-row-$code'),
+                            currency: _currency(code)!,
+                            base: _base,
+                            rate: _tableRates[code],
+                            identity: code == _base,
+                            missing: _missingTableRates.contains(code),
+                            loading: _tableLoading,
+                            amount: amount,
+                            compact: compact,
+                            onRemove: () => _removeTarget(code),
+                            onMoveUp: index == 0
+                                ? null
+                                : () => _moveTarget(code, -1),
+                            onMoveDown: index == _targets.length - 1
+                                ? null
+                                : () => _moveTarget(code, 1),
+                          ),
+                          if (index != _targets.length - 1)
+                            const Divider(height: 1, indent: 20, endIndent: 20),
+                        ],
                       ],
-                      for (var index = 0; index < _targets.length; index++) ...[
-                        RateRow(
-                          key: Key('rate-row-${_targets[index]}'),
-                          currency: _currency(_targets[index])!,
-                          base: _base,
-                          rate: _tableRates[_targets[index]],
-                          identity: _targets[index] == _base,
-                          missing: _missingTableRates.contains(_targets[index]),
-                          loading: _tableLoading,
-                          amount: amount,
-                          compact: compact,
-                          onRemove: () => _removeTarget(_targets[index]),
-                        ),
-                        if (index != _targets.length - 1)
-                          const Divider(height: 1, indent: 20, endIndent: 20),
-                      ],
-                    ],
+                    ),
                   );
                 },
               ),
@@ -578,6 +596,8 @@ class RateRow extends StatefulWidget {
     required this.amount,
     required this.compact,
     required this.onRemove,
+    required this.onMoveUp,
+    required this.onMoveDown,
   });
 
   final CurrencyInfo currency;
@@ -589,6 +609,8 @@ class RateRow extends StatefulWidget {
   final AmountParseResult amount;
   final bool compact;
   final VoidCallback onRemove;
+  final VoidCallback? onMoveUp;
+  final VoidCallback? onMoveDown;
 
   @override
   State<RateRow> createState() => _RateRowState();
@@ -596,6 +618,29 @@ class RateRow extends StatefulWidget {
 
 class _RateRowState extends State<RateRow> {
   bool _hovered = false;
+  final _upFocus = FocusNode();
+  final _downFocus = FocusNode();
+
+  @override
+  void didUpdateWidget(covariant RateRow oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (_upFocus.hasFocus &&
+        widget.onMoveUp == null &&
+        widget.onMoveDown != null) {
+      _downFocus.requestFocus();
+    } else if (_downFocus.hasFocus &&
+        widget.onMoveDown == null &&
+        widget.onMoveUp != null) {
+      _upFocus.requestFocus();
+    }
+  }
+
+  @override
+  void dispose() {
+    _upFocus.dispose();
+    _downFocus.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -646,23 +691,46 @@ class _RateRowState extends State<RateRow> {
                 ),
               ],
             );
-            final remove = IconButton(
-              key: Key('remove-${widget.currency.code}'),
-              onPressed: widget.onRemove,
-              tooltip: 'Удалить ${widget.currency.code}',
-              icon: const Icon(Icons.close_rounded, size: 20),
+            final actions = Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    key: Key('move-up-${widget.currency.code}'),
+                    focusNode: _upFocus,
+                    onPressed: widget.onMoveUp,
+                    tooltip: 'Переместить ${widget.currency.code} вверх',
+                    icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+                  ),
+                ),
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    key: Key('move-down-${widget.currency.code}'),
+                    focusNode: _downFocus,
+                    onPressed: widget.onMoveDown,
+                    tooltip: 'Переместить ${widget.currency.code} вниз',
+                    icon: const Icon(Icons.arrow_downward_rounded, size: 20),
+                  ),
+                ),
+                SizedBox.square(
+                  dimension: 48,
+                  child: IconButton(
+                    key: Key('remove-${widget.currency.code}'),
+                    onPressed: widget.onRemove,
+                    tooltip: 'Удалить ${widget.currency.code}',
+                    icon: const Icon(Icons.close_rounded, size: 20),
+                  ),
+                ),
+              ],
             );
             if (widget.compact) {
               return Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(child: name),
-                      remove,
-                    ],
-                  ),
+                  name,
+                  Align(alignment: Alignment.centerRight, child: actions),
                   const SizedBox(height: 14),
                   const Text('Курс'),
                   details,
@@ -685,7 +753,7 @@ class _RateRowState extends State<RateRow> {
                 const SizedBox(width: 20),
                 Expanded(flex: 3, child: _result(context, reverse: true)),
                 const SizedBox(width: 8),
-                remove,
+                actions,
               ],
             );
           },

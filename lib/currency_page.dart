@@ -321,7 +321,12 @@ class _CurrencyPageState extends State<CurrencyPage> {
           key: const Key('refresh-button'),
           onPressed: _refreshAll,
           tooltip: 'Обновить',
-          icon: const Icon(Icons.refresh_rounded, size: 20),
+          icon: _catalogLoading || _tableLoading
+              ? const SizedBox.square(
+                  dimension: 22,
+                  child: CircularProgressIndicator(strokeWidth: 2.5),
+                )
+              : const Icon(Icons.refresh_rounded, size: 20),
         ),
         MenuAnchor(
           childFocusNode: _themeFocus,
@@ -432,7 +437,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
             explicitChildNodes: true,
             child: Container(
               decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface,
+                color: Theme.of(context).brightness == Brightness.dark
+                    ? Theme.of(context).colorScheme.surfaceContainerLow
+                    : Theme.of(context).colorScheme.surface,
                 borderRadius: BorderRadius.circular(10),
                 border: Border.all(
                   color: Theme.of(context).colorScheme.outlineVariant,
@@ -645,6 +652,7 @@ class _RateRowState extends State<RateRow> {
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return MouseRegion(
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
@@ -658,7 +666,7 @@ class _RateRowState extends State<RateRow> {
           color: _hovered
               ? Theme.of(context).colorScheme.onSurface.withValues(alpha: 0.06)
               : Colors.transparent,
-          boxShadow: _hovered
+          boxShadow: _hovered && !isDark
               ? const [
                   BoxShadow(
                     color: Color(0x0D244C40),
@@ -720,6 +728,7 @@ class _RateRowState extends State<RateRow> {
                     key: Key('remove-${widget.currency.code}'),
                     onPressed: widget.onRemove,
                     tooltip: 'Удалить ${widget.currency.code}',
+                    color: Theme.of(context).colorScheme.error,
                     icon: const Icon(Icons.close_rounded, size: 20),
                   ),
                 ),

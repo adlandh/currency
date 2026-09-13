@@ -1,0 +1,23 @@
+{
+  "schemaVersion": 1,
+  "version": "1.0.20",
+  "mirrorVersion": "",
+  "harnesses": [
+    {
+      "name": "codex",
+      "installedComponents": [
+        "skill+commands",
+        "mcp-gates"
+      ],
+      "installedAt": "2026-09-13T14:29:31Z"
+    },
+    {
+      "name": "opencode",
+      "installedComponents": [
+        "skill+commands",
+        "mcp-gates"
+      ],
+      "installedAt": "2026-09-13T14:29:31Z"
+    }
+  ]
+}

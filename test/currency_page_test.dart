@@ -581,6 +581,29 @@ void main() {
     expect(calls, 2);
   });
 
+  testWidgets('обновление показывает индикатор прогресса на кнопке', (
+    tester,
+  ) async {
+    final refresh = Completer<http.Response>();
+    var calls = 0;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      if (++calls == 2) return refresh.future;
+      return _rates(request);
+    });
+    final indicator = find.descendant(
+      of: find.byKey(const Key('refresh-button')),
+      matching: find.byType(CircularProgressIndicator),
+    );
+    expect(indicator, findsNothing);
+    await tester.tap(find.byKey(const Key('refresh-button')));
+    await tester.pump();
+    expect(indicator, findsOneWidget);
+    refresh.complete(http.Response('unavailable', 503));
+    await tester.pumpAndSettle();
+    expect(indicator, findsNothing);
+  });
+
   testWidgets('фокус следует форме, а результаты не забирают его', (
     tester,
   ) async {

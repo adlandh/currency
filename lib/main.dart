@@ -249,7 +249,7 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
       ),
       inputDecorationTheme: InputDecorationTheme(
         filled: true,
-        fillColor: colors.surface,
+        fillColor: isLight ? colors.surface : colors.surfaceContainerLow,
         contentPadding: const EdgeInsets.symmetric(
           horizontal: 16,
           vertical: 16,

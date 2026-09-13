@@ -1,0 +1,12 @@
+{
+  "mcp": {
+    "ui-craft": {
+      "command": [
+        "npx",
+        "-y",
+        "ui-craft-mcp@0.9.0"
+      ],
+      "type": "local"
+    }
+  }
+}

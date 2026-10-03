@@ -115,7 +115,10 @@ class _CurrencyPageState extends State<CurrencyPage> {
     ];
   }
 
-  Future<void> _loadTableRates({bool refresh = false}) async {
+  Future<void> _loadTableRates({
+    bool refresh = false,
+    bool force = false,
+  }) async {
     final base = _base;
     final request = ++_tableRequest;
     final requested = _externalTargets();
@@ -141,7 +144,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
     });
 
     try {
-      final rates = await widget.api.fetchRates(base, requested);
+      final rates = await widget.api.fetchRates(base, requested, force: force);
       if (!_tableRequestIsCurrent(request, requested)) return;
       final current = _externalTargets();
       setState(() {
@@ -187,7 +190,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
       await _loadCurrencies();
       return;
     }
-    await _loadTableRates(refresh: true);
+    await _loadTableRates(refresh: true, force: true);
   }
 
   void _addTarget(String? value) {

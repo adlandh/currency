@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:currency/exchange_rates.dart';
+import 'package:currency/rate_cache.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
@@ -133,4 +135,154 @@ void main() {
       ),
     );
   });
+
+  group('кэш курсов', () {
+    late _MemoryCache cache;
+    late DateTime now;
+    late List<Uri> requests;
+    var fail = false;
+
+    ExchangeRatesApi api() => ExchangeRatesApi(
+      cache: cache,
+      now: () => now,
+      client: MockClient((request) async {
+        requests.add(request.url);
+        if (fail) return http.Response('{}', 503);
+        final quotes = request.url.queryParameters['quotes']!.split(',');
+        return http.Response(
+          jsonEncode([
+            for (final quote in quotes)
+              if (quote != 'KWD')
+                {
+                  'date': '2026-10-02',
+                  'base': 'EUR',
+                  'quote': quote,
+                  'rate': quote == 'GBP' ? 0 : 2,
+                },
+          ]),
+          200,
+        );
+      }),
+    );
+
+    List<String> quotesOf(Uri uri) => uri.queryParameters['quotes']!.split(',');
+
+    setUp(() {
+      cache = _MemoryCache();
+      now = DateTime.utc(2026, 10, 3, 10);
+      requests = [];
+      fail = false;
+    });
+
+    test('полное попадание в течение 6 часов не обращается к сети', () async {
+      await api().fetchRates('EUR', ['USD', 'CZK']);
+      now = now.add(const Duration(hours: 5, minutes: 59));
+      final result = await api().fetchRates('EUR', ['USD', 'CZK']);
+
+      expect(requests, hasLength(1));
+      expect(result.keys.toSet(), {'USD', 'CZK'});
+      expect(result['USD']!.date, DateTime.utc(2026, 10, 2));
+    });
+
+    test('запись старше 6 часов запрашивается заново', () async {
+      await api().fetchRates('EUR', ['USD']);
+      now = now.add(const Duration(hours: 6, minutes: 1));
+      await api().fetchRates('EUR', ['USD']);
+
+      expect(requests, hasLength(2));
+      expect(
+        decodeRateCache(cache.value)['EUR:USD']!.fetchedAt,
+        DateTime.utc(2026, 10, 3, 16, 1),
+      );
+    });
+
+    test('частичное попадание запрашивает только недостающие пары', () async {
+      await api().fetchRates('EUR', ['USD', 'CZK']);
+      final result = await api().fetchRates('EUR', ['USD', 'CZK', 'JPY']);
+
+      expect(quotesOf(requests.last), ['JPY']);
+      expect(result.keys.toSet(), {'USD', 'CZK', 'JPY'});
+      expect(decodeRateCache(cache.value).keys.toSet(), {
+        'EUR:USD',
+        'EUR:CZK',
+        'EUR:JPY',
+      });
+    });
+
+    test('force запрашивает все пары и обновляет время получения', () async {
+      await api().fetchRates('EUR', ['USD', 'CZK']);
+      now = now.add(const Duration(minutes: 10));
+      await api().fetchRates('EUR', ['USD', 'CZK'], force: true);
+
+      expect(requests, hasLength(2));
+      expect(quotesOf(requests.last).toSet(), {'USD', 'CZK'});
+      expect(
+        decodeRateCache(cache.value)['EUR:USD']!.fetchedAt,
+        DateTime.utc(2026, 10, 3, 10, 10),
+      );
+    });
+
+    test('ошибка сети не меняет кэш', () async {
+      await api().fetchRates('EUR', ['USD']);
+      final before = cache.value;
+      fail = true;
+
+      await expectLater(
+        api().fetchRates('EUR', ['USD'], force: true),
+        throwsA(isA<ExchangeRatesException>()),
+      );
+      expect(cache.value, before);
+    });
+
+    test('отсутствующий или некорректный курс не кэшируется', () async {
+      final result = await api().fetchRates('EUR', ['USD', 'KWD', 'GBP']);
+      expect(result.keys, ['USD']);
+      expect(decodeRateCache(cache.value).keys, ['EUR:USD']);
+
+      await api().fetchRates('EUR', ['USD', 'KWD', 'GBP']);
+      expect(quotesOf(requests.last).toSet(), {'KWD', 'GBP'});
+    });
+
+    test('запись из будущего считается несвежей', () async {
+      await api().fetchRates('EUR', ['USD']);
+      now = now.subtract(const Duration(minutes: 1));
+      await api().fetchRates('EUR', ['USD']);
+
+      expect(requests, hasLength(2));
+    });
+
+    test('повреждённый кэш игнорируется', () async {
+      cache.value = '{bad';
+      final result = await api().fetchRates('EUR', ['USD']);
+
+      expect(requests, hasLength(1));
+      expect(result.keys, ['USD']);
+      expect(decodeRateCache(cache.value).keys, ['EUR:USD']);
+    });
+
+    test('просроченные записи удаляются при записи', () async {
+      await api().fetchRates('EUR', ['USD']);
+      now = now.add(const Duration(hours: 7));
+      await api().fetchRates('EUR', ['CZK']);
+
+      expect(decodeRateCache(cache.value).keys, ['EUR:CZK']);
+    });
+
+    test('EUR не запрашивается и не кэшируется', () async {
+      await api().fetchRates('EUR', ['EUR', 'USD']);
+
+      expect(quotesOf(requests.single), ['USD']);
+      expect(decodeRateCache(cache.value).keys, ['EUR:USD']);
+    });
+  });
+}
+
+class _MemoryCache implements RateCacheStore {
+  String? value;
+
+  @override
+  String? read() => value;
+
+  @override
+  void write(String value) => this.value = value;
 }

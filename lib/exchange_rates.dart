@@ -4,6 +4,8 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 
 import 'observability.dart';
+import 'rate_cache.dart';
+import 'rate_cache_store.dart';
 
 class CurrencyInfo {
   const CurrencyInfo({required this.code, required this.name});
@@ -50,12 +52,20 @@ class ExchangeRatesApi {
     http.Client? client,
     Uri? baseUri,
     this.timeout = const Duration(seconds: 15),
+    RateCacheStore? cache,
+    DateTime Function()? now,
+    this.cacheTtl = const Duration(hours: 6),
   }) : _client = client ?? http.Client(),
-       _baseUri = baseUri ?? Uri.parse('https://api.frankfurter.dev/v2/');
+       _baseUri = baseUri ?? Uri.parse('https://api.frankfurter.dev/v2/'),
+       _cache = cache ?? createRateCacheStore(),
+       _now = now ?? DateTime.now;
 
   final http.Client _client;
   final Uri _baseUri;
   final Duration timeout;
+  final RateCacheStore _cache;
+  final DateTime Function() _now;
+  final Duration cacheTtl;
 
   Future<List<CurrencyInfo>> fetchCurrencies() =>
       traceOperation('currencies.load', () async {
@@ -78,13 +88,56 @@ class ExchangeRatesApi {
         return currencies;
       });
 
+  /// Свежие курсы берутся из кэша; [force] запрашивает все пары у источника.
   Future<Map<String, ExchangeRate>> fetchRates(
     String base,
-    Iterable<String> quotes,
-  ) async {
+    Iterable<String> quotes, {
+    bool force = false,
+  }) async {
     final requested = quotes.where((quote) => quote != base).toSet();
     if (requested.isEmpty) return const {};
 
+    final now = _now().toUtc();
+    final fresh = {
+      for (final MapEntry(:key, :value) in decodeRateCache(
+        _cache.read(),
+      ).entries)
+        if (_isFresh(value, now)) key: value,
+    };
+    final cached = <String, ExchangeRate>{
+      if (!force)
+        for (final quote in requested)
+          if (fresh[rateCacheEntryKey(base, quote)] case final hit?)
+            quote: hit.rate,
+    };
+    final missing = requested.difference(cached.keys.toSet());
+    if (missing.isEmpty) return cached;
+
+    final fetched = await _fetchRates(base, missing);
+    final fetchedAt = _now().toUtc();
+    // Просроченные записи не попадают в fresh и удаляются при записи.
+    _cache.write(
+      encodeRateCache({
+        ...fresh,
+        for (final rate in fetched.values)
+          rateCacheEntryKey(base, rate.quote): CachedRate(
+            rate: rate,
+            fetchedAt: fetchedAt,
+          ),
+      }),
+    );
+    return {...cached, ...fetched};
+  }
+
+  bool _isFresh(CachedRate entry, DateTime now) {
+    final age = now.difference(entry.fetchedAt);
+    return !age.isNegative && age < cacheTtl;
+  }
+
+  Future<Map<String, ExchangeRate>> _fetchRates(
+    String base,
+    Set<String> requested,
+  ) {
     return traceOperation('rates.load', () async {
       final uri = _baseUri
           .resolve('rates')

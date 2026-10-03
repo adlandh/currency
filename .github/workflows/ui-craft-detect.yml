@@ -32,13 +32,14 @@ jobs:
           node-version: '20'
       - name: Scan (pull_request — diff-scoped)
         if: github.event_name == 'pull_request'
-        run: npx --yes ui-craft-detect@latest . --scope changed --fail-on error
+        run: npx --yes ui-craft-detect@0.13.0 . --scope changed --fail-on error
       - name: Scan (push — full-repo, no PR diff context available)
         if: github.event_name != 'pull_request'
         env:
           SCAN_JSON_FILE: ${{ runner.temp }}/ui-craft-detect-scan.json
         run: |
-          npx --yes ui-craft-detect@latest . --scope full --fail-on error --json > "$SCAN_JSON_FILE"
+          set +e
+          npx --yes ui-craft-detect@0.13.0 . --scope full --fail-on error --json > "$SCAN_JSON_FILE"
           EXIT_CODE=$?
           cat "$SCAN_JSON_FILE"
           exit $EXIT_CODE
@@ -54,7 +55,7 @@ jobs:
           BODY_FILE="$(mktemp)"
           printf '%s\n\n' "$MARKER" > "$BODY_FILE"
           MD_FILE="$(mktemp)"
-          npx --yes ui-craft-detect@latest . --scope changed --fail-on none --markdown > "$MD_FILE" || true
+          npx --yes ui-craft-detect@0.13.0 . --scope changed --fail-on none --markdown > "$MD_FILE" || true
           cat "$MD_FILE" >> "$BODY_FILE"
           cat "$MD_FILE" >> "$GITHUB_STEP_SUMMARY"
           COMMENT_ID="$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq \
@@ -74,7 +75,7 @@ jobs:
           PR_NUMBER="${{ github.event.number }}"
           HEAD_SHA="${{ github.event.pull_request.head.sha }}"
           REVIEW_FILE="$(mktemp)"
-          npx --yes ui-craft-detect@latest . --scope changed --fail-on none \
+          npx --yes ui-craft-detect@0.13.0 . --scope changed --fail-on none \
             --review-json --commit-sha "$HEAD_SHA" > "$REVIEW_FILE" || true
           COMMENT_COUNT="$(jq -r 'if . == null then 0 else (.comments | length) end' "$REVIEW_FILE")"
           if [ "$COMMENT_COUNT" = "0" ]; then

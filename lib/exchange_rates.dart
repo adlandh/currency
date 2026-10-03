@@ -41,6 +41,7 @@ class ExchangeRatesException extends ObservedException {
     super.cause,
     super.causeStack,
     super.httpStatus,
+    super.transient,
   });
 }
 
@@ -130,12 +131,14 @@ class ExchangeRatesApi {
         'Источник курсов не ответил вовремя.',
         cause: error,
         causeStack: stack,
+        transient: true,
       );
     } on Exception catch (error, stack) {
       throw ExchangeRatesException(
         'Не удалось связаться с источником курсов.',
         cause: error,
         causeStack: stack,
+        transient: true,
       );
     }
 

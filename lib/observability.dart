@@ -221,6 +221,7 @@ Future<T> traceOperation<T>(
           operation,
           span: span,
           httpStatus: error.httpStatus,
+          once: error.transient,
         ),
       );
     } else {
@@ -244,11 +245,15 @@ class ObservedException implements Exception {
     this.cause,
     this.causeStack,
     this.httpStatus,
+    this.transient = false,
   });
   final String message;
   final Object? cause;
   final StackTrace? causeStack;
   final int? httpStatus;
+
+  /// Сетевой сбой или таймаут: регистрируется один раз за сеанс на операцию.
+  final bool transient;
   @override
   String toString() => message;
 }

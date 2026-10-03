@@ -53,6 +53,22 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
   int _generation = 0;
   bool _requestPending = false;
   bool _locationFailed = false;
+  late final _lightTheme = _buildTheme(
+    ColorScheme.fromSeed(
+      seedColor: _appAccent,
+      brightness: Brightness.light,
+    ).copyWith(
+      primary: _appAccent,
+      onPrimary: const Color(0xFFF7FFFB),
+      surface: const Color(0xFFFDFEFD),
+      error: const Color(0xFF9E2F35),
+    ),
+    isLight: true,
+  );
+  late final _darkTheme = _buildTheme(
+    ColorScheme.fromSeed(seedColor: _appAccent, brightness: Brightness.dark),
+    isLight: false,
+  );
 
   @override
   void initState() {
@@ -67,10 +83,8 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
   }
 
   void _setThemePreference(ThemePreference preference) {
-    setState(() {
-      _preference = preference;
-      _applyPreference();
-    });
+    setState(() => _preference = preference);
+    _applyPreference();
     try {
       widget.themeStore.write(preference);
     } catch (error, stack) {
@@ -173,29 +187,14 @@ class _CurrencyAppState extends State<CurrencyApp> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    final lightColors =
-        ColorScheme.fromSeed(
-          seedColor: _appAccent,
-          brightness: Brightness.light,
-        ).copyWith(
-          primary: _appAccent,
-          onPrimary: const Color(0xFFF7FFFB),
-          surface: const Color(0xFFFDFEFD),
-          error: const Color(0xFF9E2F35),
-        );
-    final darkColors = ColorScheme.fromSeed(
-      seedColor: _appAccent,
-      brightness: Brightness.dark,
-    );
-
     return MaterialApp(
       title: 'Курсы валют',
       debugShowCheckedModeBanner: false,
       locale: const Locale('ru'),
       supportedLocales: const [Locale('ru')],
       localizationsDelegates: GlobalMaterialLocalizations.delegates,
-      theme: _buildTheme(lightColors, isLight: true),
-      darkTheme: _buildTheme(darkColors, isLight: false),
+      theme: _lightTheme,
+      darkTheme: _darkTheme,
       themeMode: _themeMode,
       home: CurrencyPage(
         api: widget.api,

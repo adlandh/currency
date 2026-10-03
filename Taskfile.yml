@@ -32,6 +32,8 @@ tasks:
 
   deploy:
     desc: Развернуть Web-приложение на сервере
+    requires:
+      vars: [TARGET]
     deps: [build]
     cmds:
       - scp -r build/web/* {{.TARGET}}

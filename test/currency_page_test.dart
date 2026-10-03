@@ -474,6 +474,108 @@ void main() {
     );
   });
 
+  testWidgets('удаление во время загрузки применяет ответ к оставшимся', (
+    tester,
+  ) async {
+    final pending = Completer<http.Response>();
+    var calls = 0;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      calls++;
+      return pending.future;
+    }, settle: false);
+    await tester.pump();
+    await tester.pump();
+    await _tapAction(tester, 'remove-GBP', settle: false);
+    pending.complete(_ratesFor('EUR', ['USD', 'CZK', 'GBP']));
+    await tester.pumpAndSettle();
+    expect(calls, 1);
+    expect(_rowCodes(tester), ['USD', 'CZK']);
+    expect(_text(tester, const Key('conversion-result-USD')), '1,20 USD');
+    expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
+  });
+
+  testWidgets('удаление без сети сохраняет курсы остальных строк', (
+    tester,
+  ) async {
+    var offline = false;
+    var calls = 0;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      calls++;
+      if (offline) throw http.ClientException('offline');
+      return _rates(request);
+    });
+    offline = true;
+    await _tapAction(tester, 'remove-USD');
+    expect(calls, 1);
+    expect(_rowCodes(tester), ['CZK', 'GBP']);
+    expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
+    expect(_text(tester, const Key('reverse-result-GBP')), '1,25 EUR');
+    expect(find.textContaining('За 4 сентября'), findsNWidgets(2));
+    expect(find.text('Повторить'), findsNothing);
+  });
+
+  testWidgets('добавление сохраняет курсы других строк во время загрузки', (
+    tester,
+  ) async {
+    Completer<http.Response>? pending;
+    var failing = false;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) return _catalog();
+      if (failing) return http.Response('{}', 503);
+      return pending?.future ?? _rates(request);
+    });
+    pending = Completer<http.Response>();
+    await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
+    await tester.pump();
+    expect(_text(tester, const Key('conversion-result-USD')), '1,20 USD');
+    expect(
+      _text(tester, const Key('conversion-result-JPY')),
+      'Загрузка курса…',
+    );
+    pending.complete(_ratesFor('EUR', ['USD', 'CZK', 'GBP', 'JPY']));
+    await tester.pumpAndSettle();
+    expect(_text(tester, const Key('conversion-result-JPY')), '160 JPY');
+
+    failing = true;
+    await _choose(tester, const Key('add-target-menu'), 'KWD · Kuwaiti Dinar');
+    await tester.pumpAndSettle();
+    expect(
+      _text(tester, const Key('conversion-result-KWD')),
+      'Курс недоступен',
+    );
+    expect(_text(tester, const Key('conversion-result-USD')), '1,20 USD');
+    expect(
+      find.text('Не удалось обновить. Показаны предыдущие курсы.'),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('неожиданное исключение завершает загрузку с повтором', (
+    tester,
+  ) async {
+    var catalogFails = true;
+    await _pump(tester, (request) async {
+      if (request.url.path.endsWith('/currencies')) {
+        if (catalogFails) throw StateError('catalog bug');
+        return _catalog();
+      }
+      throw StateError('rates bug');
+    });
+    expect(find.text('Не удалось загрузить данные.'), findsOneWidget);
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+    catalogFails = false;
+    await tester.tap(find.text('Повторить'));
+    await tester.pumpAndSettle();
+    expect(find.text('Не удалось загрузить данные.'), findsOneWidget);
+    expect(
+      _text(tester, const Key('conversion-result-USD')),
+      'Курс недоступен',
+    );
+    expect(find.byType(CircularProgressIndicator), findsNothing);
+  });
+
   testWidgets('возврат списка принимает только последний запрос', (
     tester,
   ) async {
@@ -499,16 +601,18 @@ void main() {
     await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
     await tester.ensureVisible(find.byKey(const Key('remove-JPY')));
     await tester.tap(find.byKey(const Key('remove-JPY')));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    // Удаление не отправляет запрос: последний запрос (с JPY) применяется
+    // к оставшимся строкам, а более ранний отбрасывается.
     withJpy.complete(
-      _ratesFor('EUR', ['USD', 'CZK', 'GBP', 'JPY'], rateOverride: 99),
+      _ratesFor('EUR', ['USD', 'CZK', 'GBP', 'JPY'], rateOverride: 20),
     );
     oldEur.complete(_ratesFor('EUR', ['USD', 'CZK', 'GBP'], rateOverride: 99));
     await tester.pumpAndSettle();
-    expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
-    expect(_text(tester, const Key('reverse-result-CZK')), '0,04 EUR');
+    expect(_text(tester, const Key('conversion-result-CZK')), '20,00 CZK');
+    expect(_text(tester, const Key('reverse-result-CZK')), '0,05 EUR');
     expect(find.byKey(const Key('rate-row-JPY')), findsNothing);
-    expect(calls, 3);
+    expect(calls, 2);
     expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
   });
 
@@ -1602,6 +1706,18 @@ void main() {
         tester.getSemantics(toggle).getSemanticsData().tooltip,
         'Тема: Светлая',
       );
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(
+        FocusManager.instance.primaryFocus?.context
+            ?.findAncestorWidgetOfExactType<MenuItemButton>()
+            ?.key,
+        const Key('theme-light'),
+      );
+      await tester.sendKeyEvent(LogicalKeyboardKey.arrowDown);
+      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+      await tester.pumpAndSettle();
+      expect(store.initial, ThemePreference.dark);
       semantics.dispose();
     },
   );
@@ -1790,12 +1906,13 @@ Future<void> _choose(WidgetTester tester, Key key, String label) async {
 
 String _text(WidgetTester tester, Key key) {
   final widget = tester.widget(find.byKey(key));
-  return switch (widget) {
+  final String text = switch (widget) {
     SelectableText(:final data, :final textSpan) =>
       data ?? textSpan?.toPlainText() ?? '',
     Text(:final data, :final textSpan) => data ?? textSpan?.toPlainText() ?? '',
     _ => fail('Ожидался текстовый виджет, получен ${widget.runtimeType}'),
   };
+  return text.replaceAll('\u00a0', ' ');
 }
 
 Finder _menuField(Key key) =>

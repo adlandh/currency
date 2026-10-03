@@ -8,6 +8,7 @@ import 'dart:ui' show Tristate;
 import 'package:currency/currency_page.dart';
 import 'package:currency/exchange_rates.dart';
 import 'package:currency/main.dart';
+import 'package:currency/rate_cache.dart';
 import 'package:currency/rate_table_preferences.dart';
 import 'package:currency/theme_preference.dart';
 import 'package:flutter/material.dart';
@@ -17,6 +18,67 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 
 void main() {
+  testWidgets(
+    'добавление валюты во время «Обновить» не возвращает курсы кэша',
+    (tester) async {
+      final cache = _MemoryRateCache();
+      Completer<void>? slow;
+      Future<http.Response> handler(http.Request request) async {
+        if (request.url.path.endsWith('/currencies')) return _catalog();
+        if (slow == null) return _rates(request);
+        await slow.future;
+        return _ratesFor(
+          request.url.queryParameters['base']!,
+          request.url.queryParameters['quotes']!.split(','),
+          rateOverride: 2,
+        );
+      }
+
+      await _pump(tester, handler, rateCache: cache);
+      expect(_text(tester, const Key('conversion-result-USD')), '1,20 USD');
+
+      slow = Completer<void>();
+      await tester.tap(find.byKey(const Key('refresh-button')));
+      await tester.pump();
+      await _choose(tester, const Key('add-target-menu'), 'EUR · Euro');
+      await tester.pump();
+      slow.complete();
+      await tester.pumpAndSettle();
+
+      expect(_text(tester, const Key('conversion-result-USD')), '2,00 USD');
+    },
+  );
+
+  testWidgets(
+    'кэш курсов: повторное открытие без запроса, «Обновить» мимо кэша',
+    (tester) async {
+      final cache = _MemoryRateCache();
+      final rateQuotes = <List<String>>[];
+      Future<http.Response> handler(http.Request request) async {
+        if (request.url.path.endsWith('/currencies')) return _catalog();
+        rateQuotes.add(request.url.queryParameters['quotes']!.split(','));
+        return _rates(request);
+      }
+
+      await _pump(tester, handler, rateCache: cache);
+      expect(rateQuotes, hasLength(1));
+
+      await _pump(tester, handler, rateCache: cache);
+      expect(rateQuotes, hasLength(1));
+      expect(find.byKey(const Key('conversion-result-USD')), findsOneWidget);
+
+      await tester.tap(find.byKey(const Key('refresh-button')));
+      await tester.pumpAndSettle();
+      expect(rateQuotes, hasLength(2));
+      expect(rateQuotes.last.toSet(), {'USD', 'CZK', 'GBP'});
+
+      await _choose(tester, const Key('add-target-menu'), 'JPY · Japanese Yen');
+      await tester.pumpAndSettle();
+      expect(rateQuotes.last, ['JPY']);
+      expect(find.byKey(const Key('conversion-result-JPY')), findsOneWidget);
+    },
+  );
+
   testWidgets('перестановка сохраняет данные, порядок и границы списка', (
     tester,
   ) async {
@@ -1821,12 +1883,13 @@ Future<void> _pump(
   ThemePreferenceStore? themeStore,
   DateTime Function()? clock,
   Future<ThemeLocation?> Function()? locationProvider,
+  RateCacheStore? rateCache,
 }) async {
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
   final app = CurrencyApp(
     key: UniqueKey(),
-    api: ExchangeRatesApi(client: MockClient(handler)),
+    api: ExchangeRatesApi(client: MockClient(handler), cache: rateCache),
     preferencesStore: preferencesStore,
     themeStore: themeStore,
     clock: clock,
@@ -1972,4 +2035,14 @@ Future<void> _selectTheme(WidgetTester tester, String mode) async {
   await tester.pumpAndSettle();
   await tester.tap(find.byKey(Key('theme-$mode')));
   await tester.pumpAndSettle();
+}
+
+class _MemoryRateCache implements RateCacheStore {
+  String? value;
+
+  @override
+  String? read() => value;
+
+  @override
+  void write(String value) => this.value = value;
 }

@@ -334,9 +334,7 @@ void main() {
     await Future<void>.delayed(Duration.zero);
     expect(transport.events, hasLength(1));
   });
-  testWidgets('ошибки настроек не нарушают интерфейс', (
-    tester,
-  ) async {
+  testWidgets('ошибки настроек не нарушают интерфейс', (tester) async {
     final api = ExchangeRatesApi(
       client: MockClient(
         (request) async => http.Response(
@@ -372,31 +370,30 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
-  testWidgets(
-    'геолокация: ожидаемый таймаут не нарушает интерфейс',
-    (tester) async {
-      for (final unexpected in [false, true]) {
-        await tester.pumpWidget(
-          CurrencyApp(
-            key: UniqueKey(),
-            api: ExchangeRatesApi(
-              client: MockClient((_) async => http.Response('[]', 200)),
-            ),
-            locationProvider: () async {
-              if (unexpected) throw StateError('private coordinates');
-              throw TimeoutException('location');
-            },
+  testWidgets('геолокация: ожидаемый таймаут не нарушает интерфейс', (
+    tester,
+  ) async {
+    for (final unexpected in [false, true]) {
+      await tester.pumpWidget(
+        CurrencyApp(
+          key: UniqueKey(),
+          api: ExchangeRatesApi(
+            client: MockClient((_) async => http.Response('[]', 200)),
           ),
-        );
-        await tester.pumpAndSettle();
-        expect(
-          tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
-          ThemeMode.system,
-        );
-      }
-      await tester.pumpWidget(const SizedBox());
-    },
-  );
+          locationProvider: () async {
+            if (unexpected) throw StateError('private coordinates');
+            throw TimeoutException('location');
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+        ThemeMode.system,
+      );
+    }
+    await tester.pumpWidget(const SizedBox());
+  });
 
   test('повторяющаяся ошибка солнечного расчёта ограничена', () async {
     for (var i = 0; i < 3; i++) {

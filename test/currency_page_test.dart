@@ -19,6 +19,37 @@ import 'package:http/testing.dart';
 
 void main() {
   testWidgets(
+    'добавление валюты во время «Обновить» не возвращает курсы кэша',
+    (tester) async {
+      final cache = _MemoryRateCache();
+      Completer<void>? slow;
+      Future<http.Response> handler(http.Request request) async {
+        if (request.url.path.endsWith('/currencies')) return _catalog();
+        if (slow == null) return _rates(request);
+        await slow.future;
+        return _ratesFor(
+          request.url.queryParameters['base']!,
+          request.url.queryParameters['quotes']!.split(','),
+          rateOverride: 2,
+        );
+      }
+
+      await _pump(tester, handler, rateCache: cache);
+      expect(_text(tester, const Key('conversion-result-USD')), '1,20 USD');
+
+      slow = Completer<void>();
+      await tester.tap(find.byKey(const Key('refresh-button')));
+      await tester.pump();
+      await _choose(tester, const Key('add-target-menu'), 'EUR · Euro');
+      await tester.pump();
+      slow.complete();
+      await tester.pumpAndSettle();
+
+      expect(_text(tester, const Key('conversion-result-USD')), '2,00 USD');
+    },
+  );
+
+  testWidgets(
     'кэш курсов: повторное открытие без запроса, «Обновить» мимо кэша',
     (tester) async {
       final cache = _MemoryRateCache();

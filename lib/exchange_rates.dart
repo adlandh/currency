@@ -98,12 +98,7 @@ class ExchangeRatesApi {
     if (requested.isEmpty) return const {};
 
     final now = _now().toUtc();
-    final fresh = {
-      for (final MapEntry(:key, :value) in decodeRateCache(
-        _cache.read(),
-      ).entries)
-        if (_isFresh(value, now)) key: value,
-    };
+    final fresh = _freshEntries(now);
     final cached = <String, ExchangeRate>{
       if (!force)
         for (final quote in requested)
@@ -114,20 +109,24 @@ class ExchangeRatesApi {
     if (missing.isEmpty) return cached;
 
     final fetched = await _fetchRates(base, missing);
-    final fetchedAt = _now().toUtc();
-    // Просроченные записи не попадают в fresh и удаляются при записи.
-    _cache.write(
-      encodeRateCache({
-        ...fresh,
-        for (final rate in fetched.values)
-          rateCacheEntryKey(base, rate.quote): CachedRate(
-            rate: rate,
-            fetchedAt: fetchedAt,
-          ),
-      }),
-    );
+    // Параллельный запрос мог записать кэш во время ожидания, поэтому он
+    // перечитывается. Время получения — начало запроса: при пересечении пар
+    // побеждает более поздний запрос независимо от порядка ответов.
+    // Просроченные записи при этом удаляются.
+    final current = _freshEntries(_now().toUtc());
+    for (final rate in fetched.values) {
+      final key = rateCacheEntryKey(base, rate.quote);
+      if (current[key]?.fetchedAt.isAfter(now) ?? false) continue;
+      current[key] = CachedRate(rate: rate, fetchedAt: now);
+    }
+    _cache.write(encodeRateCache(current));
     return {...cached, ...fetched};
   }
+
+  Map<String, CachedRate> _freshEntries(DateTime now) => {
+    for (final MapEntry(:key, :value) in decodeRateCache(_cache.read()).entries)
+      if (_isFresh(value, now)) key: value,
+  };
 
   bool _isFresh(CachedRate entry, DateTime now) {
     final age = now.difference(entry.fetchedAt);

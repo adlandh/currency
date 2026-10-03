@@ -268,6 +268,40 @@ void main() {
       expect(decodeRateCache(cache.value).keys, ['EUR:CZK']);
     });
 
+    test('поздний ответ раннего запроса не затирает обновлённый кэш', () async {
+      final responses = <Completer<http.Response>>[];
+      final racing = ExchangeRatesApi(
+        cache: cache,
+        now: () => now,
+        client: MockClient((_) {
+          responses.add(Completer<http.Response>());
+          return responses.last.future;
+        }),
+      );
+      http.Response body(Map<String, num> rates) => http.Response(
+        jsonEncode([
+          for (final MapEntry(:key, :value) in rates.entries)
+            {'date': '2026-10-02', 'base': 'EUR', 'quote': key, 'rate': value},
+        ]),
+        200,
+      );
+
+      final early = racing.fetchRates('EUR', ['JPY']);
+      await Future<void>.delayed(Duration.zero);
+      now = now.add(const Duration(seconds: 1));
+      final refresh = racing.fetchRates('EUR', ['USD', 'JPY'], force: true);
+      await Future<void>.delayed(Duration.zero);
+
+      responses[1].complete(body({'USD': 3, 'JPY': 170}));
+      await refresh;
+      responses[0].complete(body({'JPY': 160}));
+      await early;
+
+      final stored = decodeRateCache(cache.value);
+      expect(stored['EUR:USD']!.rate.rate, 3);
+      expect(stored['EUR:JPY']!.rate.rate, 170);
+    });
+
     test('EUR не запрашивается и не кэшируется', () async {
       await api().fetchRates('EUR', ['EUR', 'USD']);
 

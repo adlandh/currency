@@ -49,6 +49,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   int _catalogRequest = 0;
   int _tableRequest = 0;
+  // Загрузка, заменившая незавершённое «Обновить», наследует обход кэша,
+  // иначе ответ обновления отбрасывается и остаются прежние курсы из кэша.
+  bool _forcePending = false;
   int _addMenuVersion = 0;
 
   @override
@@ -122,7 +125,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
     final base = _base;
     final request = ++_tableRequest;
     final requested = _externalTargets();
+    force = _forcePending = force || _forcePending;
     if (requested.isEmpty) {
+      _forcePending = false;
       setState(() {
         _tableRates = const {};
         _missingTableRates = const {};
@@ -166,6 +171,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
           _tableError = _errorMessage(error);
         }
       });
+    } finally {
+      if (request == _tableRequest) _forcePending = false;
     }
   }
 

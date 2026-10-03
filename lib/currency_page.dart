@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -67,8 +66,6 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   @override
   void dispose() {
-    _catalogRequest++;
-    _tableRequest++;
     _themeFocus.dispose();
     _amountController.dispose();
     super.dispose();
@@ -100,11 +97,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
         _persistRateTablePreferences(clearNoticeOnSuccess: false);
         unawaited(_loadTableRates());
       }
-    } on ExchangeRatesException catch (error) {
+    } catch (error) {
       if (!mounted || request != _catalogRequest) return;
       setState(() {
         _catalogLoading = false;
-        _catalogError = error.message;
+        _catalogError = _errorMessage(error);
         _currencies = const [];
       });
     }
@@ -120,9 +117,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   Future<void> _loadTableRates({bool refresh = false}) async {
     final base = _base;
-    final targets = List<String>.of(_targets);
     final request = ++_tableRequest;
-    final requested = targets.where((target) => target != base).toSet();
+    final requested = _externalTargets();
     if (requested.isEmpty) {
       setState(() {
         _tableRates = const {};
@@ -146,31 +142,44 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
     try {
       final rates = await widget.api.fetchRates(base, requested);
-      if (!_tableRequestIsCurrent(request, targets)) return;
+      if (!_tableRequestIsCurrent(request, requested)) return;
+      final current = _externalTargets();
       setState(() {
         _tableLoading = false;
-        _tableRates = rates;
-        _missingTableRates = requested.difference(rates.keys.toSet());
+        _tableRates = {for (final code in current) code: ?rates[code]};
+        _missingTableRates = current.difference(rates.keys.toSet());
       });
-    } on ExchangeRatesException catch (error) {
-      if (!_tableRequestIsCurrent(request, targets)) return;
+    } catch (error) {
+      if (!_tableRequestIsCurrent(request, requested)) return;
+      final current = _externalTargets();
       setState(() {
         _tableLoading = false;
         if (refresh && _tableRates.isNotEmpty) {
           _tableRefreshWarning = true;
+          _missingTableRates = current.difference(_tableRates.keys.toSet());
         } else {
           _tableRates = const {};
-          _missingTableRates = requested;
-          _tableError = error.message;
+          _missingTableRates = current;
+          _tableError = _errorMessage(error);
         }
       });
     }
   }
 
-  bool _tableRequestIsCurrent(int request, List<String> targets) {
+  // Неожиданные исключения уже зарегистрированы в traceOperation.
+  String _errorMessage(Object error) => error is ExchangeRatesException
+      ? error.message
+      : 'Не удалось загрузить данные.';
+
+  Set<String> _externalTargets() =>
+      _targets.where((target) => target != _base).toSet();
+
+  // Удаление не запускает запрос, поэтому последний ответ принимается,
+  // пока он покрывает все текущие внешние цели.
+  bool _tableRequestIsCurrent(int request, Set<String> requested) {
     return mounted &&
         request == _tableRequest &&
-        setEquals(targets.toSet(), _targets.toSet());
+        requested.containsAll(_externalTargets());
   }
 
   Future<void> _refreshAll() async {
@@ -188,13 +197,18 @@ class _CurrencyPageState extends State<CurrencyPage> {
       _addMenuVersion++;
     });
     _persistRateTablePreferences();
-    unawaited(_loadTableRates());
+    unawaited(_loadTableRates(refresh: true));
   }
 
   void _removeTarget(String value) {
-    setState(() => _targets = _targets.where((code) => code != value).toList());
+    setState(() {
+      _targets = _targets.where((code) => code != value).toList();
+      _tableRates = Map.of(_tableRates)..remove(value);
+      _missingTableRates = _missingTableRates.difference({value});
+    });
     _persistRateTablePreferences();
-    unawaited(_loadTableRates());
+    // Без внешних целей сбрасываем ошибки и отменяем незавершённый запрос.
+    if (_externalTargets().isEmpty) unawaited(_loadTableRates());
   }
 
   void _moveTarget(String code, int direction) {
@@ -283,12 +297,12 @@ class _CurrencyPageState extends State<CurrencyPage> {
                     if (_catalogLoading)
                       const _CatalogLoading()
                     else if (_catalogError != null)
-                      _CatalogFailure(
+                      _FailureBanner(
                         message: _catalogError!,
                         onRetry: _loadCurrencies,
                       )
                     else if (_currencies.isEmpty)
-                      _CatalogFailure(
+                      _FailureBanner(
                         message: 'Источник не вернул доступные валюты.',
                         onRetry: _loadCurrencies,
                       )
@@ -339,7 +353,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
             ])
               MenuItemButton(
                 key: Key('theme-${preference.name}'),
-                autofocus: preference == ThemePreference.auto,
+                autofocus: preference == widget.themePreference,
                 onPressed: () => widget.onThemeChanged(preference),
                 leadingIcon: SizedBox(
                   width: 24,
@@ -682,92 +696,92 @@ class _RateRowState extends State<RateRow> {
               : const [],
         ),
         padding: const EdgeInsets.fromLTRB(20, 18, 12, 18),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final details = _details(context);
-            final name = Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  widget.currency.code,
-                  style: Theme.of(context).textTheme.titleMedium,
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  widget.currency.name,
-                  style: Theme.of(context).textTheme.bodyMedium,
-                ),
-              ],
-            );
-            final actions = Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                SizedBox.square(
-                  dimension: 48,
-                  child: IconButton(
-                    key: Key('move-up-${widget.currency.code}'),
-                    focusNode: _upFocus,
-                    onPressed: widget.onMoveUp,
-                    tooltip: 'Переместить ${widget.currency.code} вверх',
-                    icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-                  ),
-                ),
-                SizedBox.square(
-                  dimension: 48,
-                  child: IconButton(
-                    key: Key('move-down-${widget.currency.code}'),
-                    focusNode: _downFocus,
-                    onPressed: widget.onMoveDown,
-                    tooltip: 'Переместить ${widget.currency.code} вниз',
-                    icon: const Icon(Icons.arrow_downward_rounded, size: 20),
-                  ),
-                ),
-                SizedBox.square(
-                  dimension: 48,
-                  child: IconButton(
-                    key: Key('remove-${widget.currency.code}'),
-                    onPressed: widget.onRemove,
-                    tooltip: 'Удалить ${widget.currency.code}',
-                    color: Theme.of(context).colorScheme.error,
-                    icon: const Icon(Icons.close_rounded, size: 20),
-                  ),
-                ),
-              ],
-            );
-            if (widget.compact) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  name,
-                  Align(alignment: Alignment.centerRight, child: actions),
-                  const SizedBox(height: 14),
-                  const Text('Курс'),
-                  details,
-                  const SizedBox(height: 14),
-                  Text('${widget.base} → ${widget.currency.code}'),
-                  _result(context),
-                  const SizedBox(height: 14),
-                  Text('${widget.currency.code} → ${widget.base}'),
-                  _result(context, reverse: true),
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Expanded(flex: 3, child: name),
-                const SizedBox(width: 20),
-                Expanded(flex: 4, child: details),
-                const SizedBox(width: 20),
-                Expanded(flex: 3, child: _result(context)),
-                const SizedBox(width: 20),
-                Expanded(flex: 3, child: _result(context, reverse: true)),
-                const SizedBox(width: 8),
-                actions,
-              ],
-            );
-          },
-        ),
+        child: _content(context),
       ),
+    );
+  }
+
+  Widget _content(BuildContext context) {
+    final details = _details(context);
+    final name = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          widget.currency.code,
+          style: Theme.of(context).textTheme.titleMedium,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          widget.currency.name,
+          style: Theme.of(context).textTheme.bodyMedium,
+        ),
+      ],
+    );
+    final actions = Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            key: Key('move-up-${widget.currency.code}'),
+            focusNode: _upFocus,
+            onPressed: widget.onMoveUp,
+            tooltip: 'Переместить ${widget.currency.code} вверх',
+            icon: const Icon(Icons.arrow_upward_rounded, size: 20),
+          ),
+        ),
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            key: Key('move-down-${widget.currency.code}'),
+            focusNode: _downFocus,
+            onPressed: widget.onMoveDown,
+            tooltip: 'Переместить ${widget.currency.code} вниз',
+            icon: const Icon(Icons.arrow_downward_rounded, size: 20),
+          ),
+        ),
+        SizedBox.square(
+          dimension: 48,
+          child: IconButton(
+            key: Key('remove-${widget.currency.code}'),
+            onPressed: widget.onRemove,
+            tooltip: 'Удалить ${widget.currency.code}',
+            color: Theme.of(context).colorScheme.error,
+            icon: const Icon(Icons.close_rounded, size: 20),
+          ),
+        ),
+      ],
+    );
+    if (widget.compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          name,
+          Align(alignment: Alignment.centerRight, child: actions),
+          const SizedBox(height: 14),
+          const Text('Курс'),
+          details,
+          const SizedBox(height: 14),
+          Text('${widget.base} → ${widget.currency.code}'),
+          _result(context),
+          const SizedBox(height: 14),
+          Text('${widget.currency.code} → ${widget.base}'),
+          _result(context, reverse: true),
+        ],
+      );
+    }
+    return Row(
+      children: [
+        Expanded(flex: 3, child: name),
+        const SizedBox(width: 20),
+        Expanded(flex: 4, child: details),
+        const SizedBox(width: 20),
+        Expanded(flex: 3, child: _result(context)),
+        const SizedBox(width: 20),
+        Expanded(flex: 3, child: _result(context, reverse: true)),
+        const SizedBox(width: 8),
+        actions,
+      ],
     );
   }
 
@@ -795,7 +809,7 @@ class _RateRowState extends State<RateRow> {
       }
     }
     return Text(
-      result.replaceAll('\u00a0', ' '),
+      result,
       key: Key(
         '${reverse ? 'reverse' : 'conversion'}-result-${widget.currency.code}',
       ),
@@ -858,17 +872,6 @@ class _CatalogLoading extends StatelessWidget {
       ),
     );
   }
-}
-
-class _CatalogFailure extends StatelessWidget {
-  const _CatalogFailure({required this.message, required this.onRetry});
-
-  final String message;
-  final VoidCallback onRetry;
-
-  @override
-  Widget build(BuildContext context) =>
-      _FailureBanner(message: message, onRetry: onRetry);
 }
 
 class _FailureBanner extends StatelessWidget {

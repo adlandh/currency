@@ -72,7 +72,11 @@ void main() {
     );
     await expectLater(
       failed.fetchCurrencies(),
-      throwsA(isA<ExchangeRatesException>()),
+      throwsA(
+        isA<ExchangeRatesException>()
+            .having((e) => e.httpStatus, 'httpStatus', 503)
+            .having((e) => e.transient, 'transient', isFalse),
+      ),
     );
 
     final malformed = ExchangeRatesApi(
@@ -80,7 +84,13 @@ void main() {
     );
     await expectLater(
       malformed.fetchCurrencies(),
-      throwsA(isA<ExchangeRatesException>()),
+      throwsA(
+        isA<ExchangeRatesException>().having(
+          (e) => e.transient,
+          'transient',
+          isFalse,
+        ),
+      ),
     );
   });
 
@@ -94,11 +104,9 @@ void main() {
     await expectLater(
       api.fetchCurrencies(),
       throwsA(
-        isA<ExchangeRatesException>().having(
-          (error) => error.message,
-          'message',
-          contains('вовремя'),
-        ),
+        isA<ExchangeRatesException>()
+            .having((error) => error.message, 'message', contains('вовремя'))
+            .having((error) => error.transient, 'transient', isTrue),
       ),
     );
   });
@@ -120,7 +128,8 @@ void main() {
               (e) => e.message,
               'message',
               'Не удалось связаться с источником курсов.',
-            ),
+            )
+            .having((e) => e.transient, 'transient', isTrue),
       ),
     );
   });

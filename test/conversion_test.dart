@@ -82,6 +82,17 @@ void main() {
       expect(_plain(formatMoney(12.3456, 'KWD')), '12,346 KWD');
       expect(_plain(formatMoney(75000, 'CZK')), '75 000,00 CZK');
     });
+
+    test('помечает курс «≈», только если отображение его округляет', () {
+      expect(formatRate(1.23456), '≈ 1,2346');
+      expect(formatRate(0.0123456), '≈ 0,012346');
+      expect(formatRate(25.12345), '≈ 25,1234');
+      expect(formatRate(25), '25,0000');
+      expect(formatRate(1.2), '1,2000');
+      expect(formatRate(0.86), '0,860000');
+      expect(_plain(formatRate(1234.5)), '1 234,50');
+      expect(_plain(formatRate(1234.567)), '≈ 1 234,57');
+    });
   });
 }
 

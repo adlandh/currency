@@ -71,17 +71,17 @@ String formatRate(double rate) {
   if (!rate.isFinite || rate <= 0) {
     throw const FormatException('Некорректный курс.');
   }
-  final rounded = double.parse(rate.toStringAsPrecision(6));
-  final magnitude = rounded.abs();
+  final magnitude = double.parse(rate.toStringAsPrecision(6));
   final digits = magnitude >= 1000
       ? 2
       : magnitude >= 1
       ? 4
       : 6;
+  final shown = double.parse(rate.toStringAsFixed(digits));
   final formatter = NumberFormat.decimalPatternDigits(
     locale: 'ru_RU',
     decimalDigits: digits,
   );
-  final prefix = rounded == rate ? '' : '≈ ';
-  return '$prefix${formatter.format(rounded)}';
+  final prefix = shown == rate ? '' : '≈ ';
+  return '$prefix${formatter.format(shown)}';
 }

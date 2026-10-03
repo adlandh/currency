@@ -129,6 +129,8 @@ void main() {
   test('API сохраняет причины, стек и отправляет ошибку один раз', () async {
     final original = StateError('sensitive amount 987654');
     for (final mode in ['network', 'http', 'json', 'timeout']) {
+      // Сетевые сбои ограничены одним событием за сеанс; начинаем новый сеанс.
+      await runWithObservability(() {}, dsn: '');
       transport.events.clear();
       final api = ExchangeRatesApi(
         timeout: const Duration(milliseconds: 1),
@@ -174,6 +176,47 @@ void main() {
       client: MockClient((_) async => throw original),
     );
     await expectLater(api.fetchCurrencies(), throwsA(same(original)));
+  });
+
+  test('сетевые сбои отправляются один раз, HTTP-ошибки каждый раз', () async {
+    for (final (mode, expected) in [
+      ('network', 1),
+      ('timeout', 1),
+      ('http', 2),
+    ]) {
+      await runWithObservability(() {}, dsn: '');
+      transport.events.clear();
+      final api = ExchangeRatesApi(
+        timeout: const Duration(milliseconds: 1),
+        client: MockClient((_) async {
+          switch (mode) {
+            case 'network':
+              throw http.ClientException('offline');
+            case 'http':
+              return http.Response('{}', 503);
+            default:
+              return Completer<http.Response>().future;
+          }
+        }),
+      );
+      for (var i = 0; i < 2; i++) {
+        await expectLater(
+          api.fetchRates('EUR', ['USD']),
+          throwsA(isA<ExchangeRatesException>()),
+        );
+      }
+      await transport.waitForEvents(2 + expected);
+      await Future<void>.delayed(const Duration(milliseconds: 10));
+      final errors = transport.events.where((e) => e['type'] != 'transaction');
+      final transactions = transport.events.where(
+        (e) => e['type'] == 'transaction',
+      );
+      expect(errors, hasLength(expected), reason: mode);
+      expect(transactions, hasLength(2), reason: mode);
+      for (final transaction in transactions) {
+        expect(transaction['contexts']['trace']['status'], 'internal_error');
+      }
+    }
   });
 
   test('параллельные операции не смешивают контекст и завершаются', () async {

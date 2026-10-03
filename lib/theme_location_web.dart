@@ -28,10 +28,8 @@ Future<ThemeLocation?> getThemeLocation() async {
         maximumAge: 300000,
       ),
     );
-    return await result.future.timeout(
-      const Duration(seconds: 10),
-      onTimeout: () => null,
-    );
+    // Ожидание разрешения ограничивает внешний таймаут в main.dart.
+    return await result.future;
   } catch (error, stack) {
     unawaited(reportError(error, stack, 'theme.location', once: true));
     return null;

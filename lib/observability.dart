@@ -82,9 +82,12 @@ void configureObservability(SentryOptions options) {
       defaultValue: '0.1',
     ),
   );
+  // ponytail: Sentry 10 defaults to streaming spans; keep transactions so
+  // beforeSendTransaction still filters and scrubs them.
+  options.traceLifecycle = SentryTraceLifecycle.static;
   options.sendDefaultPii = false;
   options.enablePrintBreadcrumbs = false;
-  options.enableLogs = false;
+  options.beforeSendLog = (_, _) => null;
   options.beforeBreadcrumb = (_, _) => null;
   options.beforeSend = (event, _) => cleanSentryEvent(event);
   options.beforeSendTransaction = (event, _) {

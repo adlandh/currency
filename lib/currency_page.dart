@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 
@@ -525,7 +526,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
                           ),
                           itemBuilder: (context, index) {
                             final code = _targets[index];
-                            return ReorderableDelayedDragStartListener(
+                            return _RowDragListener(
                               key: Key('rate-row-$code'),
                               index: index,
                               child: Column(
@@ -634,6 +635,30 @@ class CurrencyMenu extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Начинает перетаскивание строки: мышью — сразу при движении с зажатой
+/// кнопкой, касанием — после удержания, чтобы не мешать прокрутке страницы.
+// ponytail: у мыши порог сдвига при удержании 1 px, и отложенный старт
+// срывался от дрожания руки; поэтому для мыши старт немедленный.
+class _RowDragListener extends StatelessWidget {
+  const _RowDragListener({super.key, required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: (event) =>
+        SliverReorderableList.maybeOf(context)?.startItemDragReorder(
+          index: index,
+          event: event,
+          recognizer: event.kind == PointerDeviceKind.mouse
+              ? ImmediateMultiDragGestureRecognizer(debugOwner: this)
+              : DelayedMultiDragGestureRecognizer(debugOwner: this),
+        ),
+    child: child,
+  );
 }
 
 class RateRow extends StatefulWidget {

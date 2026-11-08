@@ -11,7 +11,8 @@ import 'package:currency/main.dart';
 import 'package:currency/rate_cache.dart';
 import 'package:currency/rate_table_preferences.dart';
 import 'package:currency/theme_preference.dart';
-import 'package:flutter/gestures.dart' show kLongPressTimeout;
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kLongPressTimeout;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart'
     show CustomSemanticsAction, SemanticsAction;
@@ -217,6 +218,44 @@ void main() {
     await _tapAction(tester, 'remove-EUR');
     expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
     expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('мышь переносит строку несмотря на дрожание и кликает удаление', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+    final from = tester.getRect(find.byKey(const Key('rate-row-GBP')));
+    final to = tester.getRect(find.byKey(const Key('rate-row-USD')));
+    final mouse = await tester.startGesture(
+      from.centerLeft + const Offset(24, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    // Рука дрожит на 2 px во время удержания.
+    for (var i = 0; i < 5; i++) {
+      await mouse.moveBy(Offset(i.isEven ? 2 : -2, 1));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    final dy = to.center.dy - from.center.dy - 8;
+    for (var i = 1; i <= 10; i++) {
+      await mouse.moveBy(Offset(0, dy / 10));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
+    await tester.tap(
+      find.byKey(const Key('remove-USD')),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester), ['GBP', 'CZK']);
   });
 
   testWidgets('диктор получает действия перемещения на русском', (

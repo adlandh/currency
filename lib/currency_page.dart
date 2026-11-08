@@ -221,13 +221,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
     if (_externalTargets().isEmpty) unawaited(_loadTableRates());
   }
 
-  void _moveTarget(String code, int direction) {
-    final index = _targets.indexOf(code);
-    final destination = index + direction;
-    if (index < 0 || destination < 0 || destination >= _targets.length) return;
+  // newIndex уже скорректирован под удалённый элемент (onReorderItem).
+  void _reorderTarget(int oldIndex, int newIndex) {
+    if (oldIndex == newIndex) return;
     final targets = List<String>.of(_targets);
-    targets[index] = targets[destination];
-    targets[destination] = code;
+    targets.insert(newIndex, targets.removeAt(oldIndex));
     setState(() => _targets = targets);
     _persistRateTablePreferences();
   }
@@ -503,34 +501,57 @@ class _CurrencyPageState extends State<CurrencyPage> {
                                     textAlign: TextAlign.right,
                                   ),
                                 ),
-                                SizedBox(width: 152),
+                                SizedBox(width: 56),
                               ],
                             ),
                           ),
                           const Divider(height: 1),
                         ],
-                        for (final (index, code) in _targets.indexed) ...[
-                          RateRow(
-                            key: Key('rate-row-$code'),
-                            currency: _currency(code)!,
-                            base: _base,
-                            rate: _tableRates[code],
-                            identity: code == _base,
-                            missing: _missingTableRates.contains(code),
-                            loading: _tableLoading,
-                            amount: amount,
-                            compact: compact,
-                            onRemove: () => _removeTarget(code),
-                            onMoveUp: index == 0
-                                ? null
-                                : () => _moveTarget(code, -1),
-                            onMoveDown: index == _targets.length - 1
-                                ? null
-                                : () => _moveTarget(code, 1),
+                        ReorderableListView.builder(
+                          shrinkWrap: true,
+                          physics: const NeverScrollableScrollPhysics(),
+                          buildDefaultDragHandles: false,
+                          itemCount: _targets.length,
+                          onReorderItem: _reorderTarget,
+                          proxyDecorator: (child, _, _) => Material(
+                            elevation: 6,
+                            color:
+                                Theme.of(context).brightness == Brightness.dark
+                                ? Theme.of(context)
+                                      .colorScheme
+                                      .surfaceContainerLow
+                                : Theme.of(context).colorScheme.surface,
+                            child: child,
                           ),
-                          if (index != _targets.length - 1)
-                            const Divider(height: 1, indent: 20, endIndent: 20),
-                        ],
+                          itemBuilder: (context, index) {
+                            final code = _targets[index];
+                            return ReorderableDelayedDragStartListener(
+                              key: Key('rate-row-$code'),
+                              index: index,
+                              child: Column(
+                                children: [
+                                  RateRow(
+                                    currency: _currency(code)!,
+                                    base: _base,
+                                    rate: _tableRates[code],
+                                    identity: code == _base,
+                                    missing: _missingTableRates.contains(code),
+                                    loading: _tableLoading,
+                                    amount: amount,
+                                    compact: compact,
+                                    onRemove: () => _removeTarget(code),
+                                  ),
+                                  if (index != _targets.length - 1)
+                                    const Divider(
+                                      height: 1,
+                                      indent: 20,
+                                      endIndent: 20,
+                                    ),
+                                ],
+                              ),
+                            );
+                          },
+                        ),
                       ],
                     ),
                   );
@@ -627,8 +648,6 @@ class RateRow extends StatefulWidget {
     required this.amount,
     required this.compact,
     required this.onRemove,
-    required this.onMoveUp,
-    required this.onMoveDown,
   });
 
   final CurrencyInfo currency;
@@ -640,8 +659,6 @@ class RateRow extends StatefulWidget {
   final AmountParseResult amount;
   final bool compact;
   final VoidCallback onRemove;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
 
   @override
   State<RateRow> createState() => _RateRowState();
@@ -649,35 +666,13 @@ class RateRow extends StatefulWidget {
 
 class _RateRowState extends State<RateRow> {
   bool _hovered = false;
-  final _upFocus = FocusNode();
-  final _downFocus = FocusNode();
-
-  @override
-  void didUpdateWidget(covariant RateRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_upFocus.hasFocus &&
-        widget.onMoveUp == null &&
-        widget.onMoveDown != null) {
-      _downFocus.requestFocus();
-    } else if (_downFocus.hasFocus &&
-        widget.onMoveDown == null &&
-        widget.onMoveUp != null) {
-      _upFocus.requestFocus();
-    }
-  }
-
-  @override
-  void dispose() {
-    _upFocus.dispose();
-    _downFocus.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return MouseRegion(
+      cursor: SystemMouseCursors.grab,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedContainer(
@@ -727,40 +722,15 @@ class _RateRowState extends State<RateRow> {
         ),
       ],
     );
-    final actions = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('move-up-${widget.currency.code}'),
-            focusNode: _upFocus,
-            onPressed: widget.onMoveUp,
-            tooltip: 'Переместить ${widget.currency.code} вверх',
-            icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-          ),
-        ),
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('move-down-${widget.currency.code}'),
-            focusNode: _downFocus,
-            onPressed: widget.onMoveDown,
-            tooltip: 'Переместить ${widget.currency.code} вниз',
-            icon: const Icon(Icons.arrow_downward_rounded, size: 20),
-          ),
-        ),
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('remove-${widget.currency.code}'),
-            onPressed: widget.onRemove,
-            tooltip: 'Удалить ${widget.currency.code}',
-            color: Theme.of(context).colorScheme.error,
-            icon: const Icon(Icons.close_rounded, size: 20),
-          ),
-        ),
-      ],
+    final actions = SizedBox.square(
+      dimension: 48,
+      child: IconButton(
+        key: Key('remove-${widget.currency.code}'),
+        onPressed: widget.onRemove,
+        tooltip: 'Удалить ${widget.currency.code}',
+        color: Theme.of(context).colorScheme.error,
+        icon: const Icon(Icons.close_rounded, size: 20),
+      ),
     );
     if (widget.compact) {
       return Column(

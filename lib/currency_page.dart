@@ -555,15 +555,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
                               key: Key('rate-row-$code'),
                               index: index,
                               // DecoratedSliver не обрезает детей: тень и фон
-                              // наведения обрезаются по строке и углам рамки.
+                              // наведения обрезаются только по краям рамки.
                               child: ClipRRect(
-                                borderRadius: BorderRadius.vertical(
-                                  top: Radius.circular(
-                                    compact && index == 0 ? 9 : 0,
-                                  ),
-                                  bottom: Radius.circular(
-                                    index == _targets.length - 1 ? 9 : 0,
-                                  ),
+                                clipper: _TableEdgeClipper(
+                                  top: compact && index == 0,
+                                  bottom: index == _targets.length - 1,
                                 ),
                                 child: Column(
                                   children: [
@@ -687,6 +683,36 @@ class CurrencyMenu extends StatelessWidget {
 /// кнопкой, касанием — после удержания, чтобы не мешать прокрутке страницы.
 // ponytail: у мыши порог сдвига при удержании 1 px, и отложенный старт
 // срывался от дрожания руки; поэтому для мыши старт немедленный.
+/// Обрезает строку по бокам рамки таблицы, а сверху и снизу — только если
+/// строка у края таблицы (со скруглением). Между строками тень наведения
+/// и подъём на 1 px остаются видны поверх соседей.
+class _TableEdgeClipper extends CustomClipper<RRect> {
+  const _TableEdgeClipper({required this.top, required this.bottom});
+
+  /// Запас под тень наведения (blur 10 + сдвиг 3).
+  static const _overflow = 20.0;
+  static const _radius = Radius.circular(9); // 10 у рамки минус 1 px толщины.
+
+  final bool top;
+  final bool bottom;
+
+  @override
+  RRect getClip(Size size) => RRect.fromLTRBAndCorners(
+    0,
+    top ? 0 : -_overflow,
+    size.width,
+    bottom ? size.height : size.height + _overflow,
+    topLeft: top ? _radius : Radius.zero,
+    topRight: top ? _radius : Radius.zero,
+    bottomLeft: bottom ? _radius : Radius.zero,
+    bottomRight: bottom ? _radius : Radius.zero,
+  );
+
+  @override
+  bool shouldReclip(_TableEdgeClipper old) =>
+      old.top != top || old.bottom != bottom;
+}
+
 class _RowDragListener extends StatelessWidget {
   const _RowDragListener({super.key, required this.index, required this.child});
 

@@ -191,7 +191,8 @@ void main() {
     expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
     expect(requests, beforeRequests);
     // Тень наведения не выходит за скруглённые углы рамки таблицы.
-    BorderRadiusGeometry clipOf(String code) => tester
+    // Между строками тень не обрезается.
+    RRect clipOf(String code) => tester
         .widget<ClipRRect>(
           find
               .descendant(
@@ -200,14 +201,19 @@ void main() {
               )
               .first,
         )
-        .borderRadius;
+        .clipper!
+        .getClip(const Size(300, 80));
+    const r = Radius.circular(9);
+    // Узкий экран без шапки: у первой строки скруглён верх.
+    expect(
+      clipOf('USD'),
+      RRect.fromLTRBAndCorners(0, 0, 300, 100, topLeft: r, topRight: r),
+    );
+    expect(clipOf('CZK'), RRect.fromLTRBR(0, -20, 300, 100, Radius.zero));
     expect(
       clipOf('GBP'),
-      const BorderRadius.vertical(bottom: Radius.circular(9)),
+      RRect.fromLTRBAndCorners(0, -20, 300, 80, bottomLeft: r, bottomRight: r),
     );
-    // Узкий экран без шапки: у первой строки скруглён верх.
-    expect(clipOf('USD'), const BorderRadius.vertical(top: Radius.circular(9)));
-    expect(clipOf('CZK'), BorderRadius.zero);
 
     final writes = store.writes;
     final row = find.byKey(const Key('rate-row-CZK'));

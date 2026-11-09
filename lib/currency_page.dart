@@ -554,26 +554,40 @@ class _CurrencyPageState extends State<CurrencyPage> {
                             return _RowDragListener(
                               key: Key('rate-row-$code'),
                               index: index,
-                              child: Column(
-                                children: [
-                                  RateRow(
-                                    currency: _currency(code)!,
-                                    base: _base,
-                                    rate: _tableRates[code],
-                                    identity: code == _base,
-                                    missing: _missingTableRates.contains(code),
-                                    loading: _tableLoading,
-                                    amount: amount,
-                                    compact: compact,
-                                    onRemove: () => _removeTarget(code),
+                              // DecoratedSliver не обрезает детей: тень и фон
+                              // наведения обрезаются по строке и углам рамки.
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.vertical(
+                                  top: Radius.circular(
+                                    compact && index == 0 ? 9 : 0,
                                   ),
-                                  if (index != _targets.length - 1)
-                                    const Divider(
-                                      height: 1,
-                                      indent: 20,
-                                      endIndent: 20,
+                                  bottom: Radius.circular(
+                                    index == _targets.length - 1 ? 9 : 0,
+                                  ),
+                                ),
+                                child: Column(
+                                  children: [
+                                    RateRow(
+                                      currency: _currency(code)!,
+                                      base: _base,
+                                      rate: _tableRates[code],
+                                      identity: code == _base,
+                                      missing: _missingTableRates.contains(
+                                        code,
+                                      ),
+                                      loading: _tableLoading,
+                                      amount: amount,
+                                      compact: compact,
+                                      onRemove: () => _removeTarget(code),
                                     ),
-                                ],
+                                    if (index != _targets.length - 1)
+                                      const Divider(
+                                        height: 1,
+                                        indent: 20,
+                                        endIndent: 20,
+                                      ),
+                                  ],
+                                ),
                               ),
                             );
                           },

@@ -190,6 +190,24 @@ void main() {
     expect(results(), before);
     expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
     expect(requests, beforeRequests);
+    // Тень наведения не выходит за скруглённые углы рамки таблицы.
+    BorderRadiusGeometry clipOf(String code) => tester
+        .widget<ClipRRect>(
+          find
+              .descendant(
+                of: find.byKey(Key('rate-row-$code')),
+                matching: find.byType(ClipRRect),
+              )
+              .first,
+        )
+        .borderRadius;
+    expect(
+      clipOf('GBP'),
+      const BorderRadius.vertical(bottom: Radius.circular(9)),
+    );
+    // Узкий экран без шапки: у первой строки скруглён верх.
+    expect(clipOf('USD'), const BorderRadius.vertical(top: Radius.circular(9)));
+    expect(clipOf('CZK'), BorderRadius.zero);
 
     final writes = store.writes;
     final row = find.byKey(const Key('rate-row-CZK'));

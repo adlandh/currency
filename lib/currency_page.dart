@@ -1,6 +1,9 @@
 import 'dart:async';
+import 'dart:math' as math;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:intl/intl.dart';
 
 import 'conversion.dart';
@@ -221,13 +224,11 @@ class _CurrencyPageState extends State<CurrencyPage> {
     if (_externalTargets().isEmpty) unawaited(_loadTableRates());
   }
 
-  void _moveTarget(String code, int direction) {
-    final index = _targets.indexOf(code);
-    final destination = index + direction;
-    if (index < 0 || destination < 0 || destination >= _targets.length) return;
+  // newIndex уже скорректирован под удалённый элемент (onReorderItem).
+  void _reorderTarget(int oldIndex, int newIndex) {
+    if (oldIndex == newIndex) return;
     final targets = List<String>.of(_targets);
-    targets[index] = targets[destination];
-    targets[destination] = code;
+    targets.insert(newIndex, targets.removeAt(oldIndex));
     setState(() => _targets = targets);
     _persistRateTablePreferences();
   }
@@ -272,56 +273,73 @@ class _CurrencyPageState extends State<CurrencyPage> {
     final horizontalPadding = MediaQuery.sizeOf(context).width < 600
         ? 20.0
         : 48.0;
+    // Список строк — сливер прокрутки страницы: так перетаскивание у края
+    // экрана само прокручивает страницу.
     return Scaffold(
       body: SafeArea(
         child: Scrollbar(
-          child: SingleChildScrollView(
+          child: CustomScrollView(
             primary: true,
-            padding: EdgeInsets.fromLTRB(
-              horizontalPadding,
-              40,
-              horizontalPadding,
-              48,
-            ),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1040),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHeader(context),
-                    if (_preferencesNotice != null) ...[
-                      const SizedBox(height: 24),
-                      Semantics(
-                        key: const Key('preferences-notice'),
-                        liveRegion: true,
-                        child: _InlineNotice(
-                          icon: Icons.warning_amber_rounded,
-                          text: _preferencesNotice!,
+            // ponytail: строим всю страницу, как прежний SingleChildScrollView:
+            // иначе строки за экраном недоступны для Tab и диктора. Валют
+            // десятки, а не тысячи; при росте — вернуть ленивую отрисовку.
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1e6),
+            slivers: [
+              SliverLayoutBuilder(
+                builder: (context, constraints) {
+                  // Колонка шириной до 1040, по центру.
+                  final side = math.max(
+                    horizontalPadding,
+                    (constraints.crossAxisExtent - 1040) / 2,
+                  );
+                  return SliverPadding(
+                    padding: EdgeInsets.fromLTRB(side, 40, side, 48),
+                    sliver: SliverMainAxisGroup(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeader(context),
+                              if (_preferencesNotice != null) ...[
+                                const SizedBox(height: 24),
+                                Semantics(
+                                  key: const Key('preferences-notice'),
+                                  liveRegion: true,
+                                  child: _InlineNotice(
+                                    icon: Icons.warning_amber_rounded,
+                                    text: _preferencesNotice!,
+                                  ),
+                                ),
+                                const SizedBox(height: 32),
+                              ] else
+                                const SizedBox(height: 40),
+                              if (_catalogLoading)
+                                const _CatalogLoading()
+                              else if (_catalogError != null)
+                                _FailureBanner(
+                                  message: _catalogError!,
+                                  onRetry: _loadCurrencies,
+                                )
+                              else if (_currencies.isEmpty)
+                                _FailureBanner(
+                                  message:
+                                      'Источник не вернул доступные валюты.',
+                                  onRetry: _loadCurrencies,
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 32),
-                    ] else
-                      const SizedBox(height: 40),
-                    if (_catalogLoading)
-                      const _CatalogLoading()
-                    else if (_catalogError != null)
-                      _FailureBanner(
-                        message: _catalogError!,
-                        onRetry: _loadCurrencies,
-                      )
-                    else if (_currencies.isEmpty)
-                      _FailureBanner(
-                        message: 'Источник не вернул доступные валюты.',
-                        onRetry: _loadCurrencies,
-                      )
-                    else
-                      _buildRates(context),
-                  ],
-                ),
+                        if (!_catalogLoading &&
+                            _catalogError == null &&
+                            _currencies.isNotEmpty)
+                          ..._buildRates(context),
+                      ],
+                    ),
+                  );
+                },
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -409,162 +427,208 @@ class _CurrencyPageState extends State<CurrencyPage> {
     );
   }
 
-  Widget _buildRates(BuildContext context) {
+  List<Widget> _buildRates(BuildContext context) {
     final amount = parseAmount(_amountController.text);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          key: const Key('amount-field'),
-          controller: _amountController,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          textInputAction: TextInputAction.done,
-          style: const TextStyle(
-            fontSize: 17,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-          decoration: InputDecoration(
-            labelText: 'Сумма',
-            hintText: 'Например, 3 000,50',
-            helperText: amount.status == AmountStatus.empty
-                ? 'Введите сумму'
-                : null,
-            errorText: amount.status == AmountStatus.invalid
-                ? amount.error
-                : null,
-            errorMaxLines: 3,
-          ),
-          onChanged: (_) {
-            setState(() {});
-            if (parseAmount(_amountController.text).status ==
-                AmountStatus.valid) {
-              _persistRateTablePreferences();
-            }
-          },
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
-        ),
-        const SizedBox(height: 24),
-        if (_tableError != null) ...[
-          _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
-          const SizedBox(height: 16),
-        ],
-        if (_targets.isEmpty)
-          const _EmptyRates()
-        else
-          Semantics(
-            key: const Key('conversion-semantics'),
-            liveRegion: true,
-            container: true,
-            explicitChildNodes: true,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Theme.of(context).colorScheme.surfaceContainerLow
-                    : Theme.of(context).colorScheme.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
+    final surface = Theme.of(context).brightness == Brightness.dark
+        ? Theme.of(context).colorScheme.surfaceContainerLow
+        : Theme.of(context).colorScheme.surface;
+    return [
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: const Key('amount-field'),
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
-              clipBehavior: Clip.antiAlias,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact =
-                      constraints.maxWidth < 900 ||
-                      MediaQuery.textScalerOf(context).scale(17) > 25;
-                  return FocusTraversalGroup(
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(
+                fontSize: 17,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+              decoration: InputDecoration(
+                labelText: 'Сумма',
+                hintText: 'Например, 3 000,50',
+                helperText: amount.status == AmountStatus.empty
+                    ? 'Введите сумму'
+                    : null,
+                errorText: amount.status == AmountStatus.invalid
+                    ? amount.error
+                    : null,
+                errorMaxLines: 3,
+              ),
+              onChanged: (_) {
+                setState(() {});
+                if (parseAmount(_amountController.text).status ==
+                    AmountStatus.valid) {
+                  _persistRateTablePreferences();
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
+            ),
+            const SizedBox(height: 24),
+            if (_tableError != null) ...[
+              _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
+              const SizedBox(height: 16),
+            ],
+            if (_targets.isEmpty) const _EmptyRates(),
+          ],
+        ),
+      ),
+      if (_targets.isNotEmpty)
+        SliverLayoutBuilder(
+          builder: (context, constraints) {
+            final compact =
+                constraints.crossAxisExtent < 900 ||
+                MediaQuery.textScalerOf(context).scale(17) > 25;
+            return SliverSemantics(
+              key: const Key('conversion-semantics'),
+              liveRegion: true,
+              container: true,
+              explicitChildNodes: true,
+              sliver: DecoratedSliver(
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                ),
+                sliver: SliverPadding(
+                  // Отступ под рамку, как у Container с BoxDecoration.
+                  padding: const EdgeInsets.all(1),
+                  sliver: FocusTraversalGroup(
                     policy: ReadingOrderTraversalPolicy(),
-                    child: Column(
-                      children: [
-                        if (!compact) ...[
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
-                            child: Row(
+                    child: SliverMainAxisGroup(
+                      slivers: [
+                        if (!compact)
+                          SliverToBoxAdapter(
+                            child: Column(
                               children: [
-                                Expanded(flex: 3, child: Text('Валюта')),
-                                SizedBox(width: 20),
-                                Expanded(flex: 4, child: Text('Курс')),
-                                SizedBox(width: 20),
-                                Expanded(
-                                  flex: 3,
-                                  child: Text(
-                                    'EUR → валюта',
-                                    textAlign: TextAlign.right,
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
+                                  child: Row(
+                                    children: [
+                                      Expanded(flex: 3, child: Text('Валюта')),
+                                      SizedBox(width: 20),
+                                      Expanded(flex: 4, child: Text('Курс')),
+                                      SizedBox(width: 20),
+                                      Expanded(
+                                        flex: 3,
+                                        child: Text(
+                                          'EUR → валюта',
+                                          textAlign: TextAlign.right,
+                                        ),
+                                      ),
+                                      SizedBox(width: 20),
+                                      Expanded(
+                                        flex: 3,
+                                        child: Text(
+                                          'Валюта → EUR',
+                                          textAlign: TextAlign.right,
+                                        ),
+                                      ),
+                                      SizedBox(width: 56),
+                                    ],
                                   ),
                                 ),
-                                SizedBox(width: 20),
-                                Expanded(
-                                  flex: 3,
-                                  child: Text(
-                                    'Валюта → EUR',
-                                    textAlign: TextAlign.right,
-                                  ),
-                                ),
-                                SizedBox(width: 152),
+                                const Divider(height: 1),
                               ],
                             ),
                           ),
-                          const Divider(height: 1),
-                        ],
-                        for (final (index, code) in _targets.indexed) ...[
-                          RateRow(
-                            key: Key('rate-row-$code'),
-                            currency: _currency(code)!,
-                            base: _base,
-                            rate: _tableRates[code],
-                            identity: code == _base,
-                            missing: _missingTableRates.contains(code),
-                            loading: _tableLoading,
-                            amount: amount,
-                            compact: compact,
-                            onRemove: () => _removeTarget(code),
-                            onMoveUp: index == 0
-                                ? null
-                                : () => _moveTarget(code, -1),
-                            onMoveDown: index == _targets.length - 1
-                                ? null
-                                : () => _moveTarget(code, 1),
+                        SliverReorderableList(
+                          itemCount: _targets.length,
+                          onReorderItem: _reorderTarget,
+                          proxyDecorator: (child, _, _) => Material(
+                            elevation: 6,
+                            color: surface,
+                            child: child,
                           ),
-                          if (index != _targets.length - 1)
-                            const Divider(height: 1, indent: 20, endIndent: 20),
-                        ],
+                          itemBuilder: (context, index) {
+                            final code = _targets[index];
+                            return _RowDragListener(
+                              key: Key('rate-row-$code'),
+                              index: index,
+                              // DecoratedSliver не обрезает детей: тень и фон
+                              // наведения обрезаются только по краям рамки.
+                              child: ClipRRect(
+                                clipper: _TableEdgeClipper(
+                                  top: compact && index == 0,
+                                  bottom: index == _targets.length - 1,
+                                ),
+                                child: Column(
+                                  children: [
+                                    RateRow(
+                                      currency: _currency(code)!,
+                                      base: _base,
+                                      rate: _tableRates[code],
+                                      identity: code == _base,
+                                      missing: _missingTableRates.contains(
+                                        code,
+                                      ),
+                                      loading: _tableLoading,
+                                      amount: amount,
+                                      compact: compact,
+                                      onRemove: () => _removeTarget(code),
+                                    ),
+                                    if (index != _targets.length - 1)
+                                      const Divider(
+                                        height: 1,
+                                        indent: 20,
+                                        endIndent: 20,
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ],
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
+            );
+          },
+        ),
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_tableRefreshWarning) ...[
+              const SizedBox(height: 12),
+              const _InlineNotice(
+                icon: Icons.info_outline_rounded,
+                text: 'Не удалось обновить. Показаны предыдущие курсы.',
+              ),
+            ],
+            const SizedBox(height: 24),
+            CurrencyMenu(
+              key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
+              fieldKey: const Key('add-target-menu'),
+              label: 'Добавить валюту',
+              currencies: _currencies,
+              disabledCodes: _targets.toSet(),
+              onSelected: _addTarget,
             ),
-          ),
-        if (_tableRefreshWarning) ...[
-          const SizedBox(height: 12),
-          const _InlineNotice(
-            icon: Icons.info_outline_rounded,
-            text: 'Не удалось обновить. Показаны предыдущие курсы.',
-          ),
-        ],
-        const SizedBox(height: 24),
-        CurrencyMenu(
-          key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
-          fieldKey: const Key('add-target-menu'),
-          label: 'Добавить валюту',
-          currencies: _currencies,
-          disabledCodes: _targets.toSet(),
-          onSelected: _addTarget,
+            if (_targets.length == _currencies.length) ...[
+              const SizedBox(height: 8),
+              const Text('Все валюты уже добавлены.'),
+            ],
+            const SizedBox(height: 18),
+            Text(
+              'Источник: Frankfurter. Ежедневные справочные курсы; банковские комиссии не учитываются.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
         ),
-        if (_targets.length == _currencies.length) ...[
-          const SizedBox(height: 8),
-          const Text('Все валюты уже добавлены.'),
-        ],
-        const SizedBox(height: 18),
-        Text(
-          'Источник: Frankfurter. Ежедневные справочные курсы; банковские комиссии не учитываются.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-      ],
-    );
+      ),
+    ];
   }
 }
 
@@ -615,6 +679,60 @@ class CurrencyMenu extends StatelessWidget {
   }
 }
 
+/// Обрезает строку по бокам рамки таблицы, а сверху и снизу — только если
+/// строка у края таблицы (со скруглением). Между строками тень наведения
+/// и подъём на 1 px остаются видны поверх соседей.
+class _TableEdgeClipper extends CustomClipper<RRect> {
+  const _TableEdgeClipper({required this.top, required this.bottom});
+
+  /// Запас под тень наведения (blur 10 + сдвиг 3).
+  static const _overflow = 20.0;
+  static const _radius = Radius.circular(9); // 10 у рамки минус 1 px толщины.
+
+  final bool top;
+  final bool bottom;
+
+  @override
+  RRect getClip(Size size) => RRect.fromLTRBAndCorners(
+    0,
+    top ? 0 : -_overflow,
+    size.width,
+    bottom ? size.height : size.height + _overflow,
+    topLeft: top ? _radius : Radius.zero,
+    topRight: top ? _radius : Radius.zero,
+    bottomLeft: bottom ? _radius : Radius.zero,
+    bottomRight: bottom ? _radius : Radius.zero,
+  );
+
+  @override
+  bool shouldReclip(_TableEdgeClipper old) =>
+      old.top != top || old.bottom != bottom;
+}
+
+/// Начинает перетаскивание строки: мышью — сразу при движении с зажатой
+/// кнопкой, касанием — после удержания, чтобы не мешать прокрутке страницы.
+// ponytail: у мыши порог сдвига при удержании 1 px, и отложенный старт
+// срывался от дрожания руки; поэтому для мыши старт немедленный.
+class _RowDragListener extends StatelessWidget {
+  const _RowDragListener({super.key, required this.index, required this.child});
+
+  final int index;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => Listener(
+    onPointerDown: (event) =>
+        SliverReorderableList.maybeOf(context)?.startItemDragReorder(
+          index: index,
+          event: event,
+          recognizer: event.kind == PointerDeviceKind.mouse
+              ? ImmediateMultiDragGestureRecognizer(debugOwner: this)
+              : DelayedMultiDragGestureRecognizer(debugOwner: this),
+        ),
+    child: child,
+  );
+}
+
 class RateRow extends StatefulWidget {
   const RateRow({
     super.key,
@@ -627,8 +745,6 @@ class RateRow extends StatefulWidget {
     required this.amount,
     required this.compact,
     required this.onRemove,
-    required this.onMoveUp,
-    required this.onMoveDown,
   });
 
   final CurrencyInfo currency;
@@ -640,8 +756,6 @@ class RateRow extends StatefulWidget {
   final AmountParseResult amount;
   final bool compact;
   final VoidCallback onRemove;
-  final VoidCallback? onMoveUp;
-  final VoidCallback? onMoveDown;
 
   @override
   State<RateRow> createState() => _RateRowState();
@@ -649,35 +763,13 @@ class RateRow extends StatefulWidget {
 
 class _RateRowState extends State<RateRow> {
   bool _hovered = false;
-  final _upFocus = FocusNode();
-  final _downFocus = FocusNode();
-
-  @override
-  void didUpdateWidget(covariant RateRow oldWidget) {
-    super.didUpdateWidget(oldWidget);
-    if (_upFocus.hasFocus &&
-        widget.onMoveUp == null &&
-        widget.onMoveDown != null) {
-      _downFocus.requestFocus();
-    } else if (_downFocus.hasFocus &&
-        widget.onMoveDown == null &&
-        widget.onMoveUp != null) {
-      _upFocus.requestFocus();
-    }
-  }
-
-  @override
-  void dispose() {
-    _upFocus.dispose();
-    _downFocus.dispose();
-    super.dispose();
-  }
 
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return MouseRegion(
+      cursor: SystemMouseCursors.grab,
       onEnter: (_) => setState(() => _hovered = true),
       onExit: (_) => setState(() => _hovered = false),
       child: AnimatedContainer(
@@ -727,40 +819,15 @@ class _RateRowState extends State<RateRow> {
         ),
       ],
     );
-    final actions = Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('move-up-${widget.currency.code}'),
-            focusNode: _upFocus,
-            onPressed: widget.onMoveUp,
-            tooltip: 'Переместить ${widget.currency.code} вверх',
-            icon: const Icon(Icons.arrow_upward_rounded, size: 20),
-          ),
-        ),
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('move-down-${widget.currency.code}'),
-            focusNode: _downFocus,
-            onPressed: widget.onMoveDown,
-            tooltip: 'Переместить ${widget.currency.code} вниз',
-            icon: const Icon(Icons.arrow_downward_rounded, size: 20),
-          ),
-        ),
-        SizedBox.square(
-          dimension: 48,
-          child: IconButton(
-            key: Key('remove-${widget.currency.code}'),
-            onPressed: widget.onRemove,
-            tooltip: 'Удалить ${widget.currency.code}',
-            color: Theme.of(context).colorScheme.error,
-            icon: const Icon(Icons.close_rounded, size: 20),
-          ),
-        ),
-      ],
+    final actions = SizedBox.square(
+      dimension: 48,
+      child: IconButton(
+        key: Key('remove-${widget.currency.code}'),
+        onPressed: widget.onRemove,
+        tooltip: 'Удалить ${widget.currency.code}',
+        color: Theme.of(context).colorScheme.error,
+        icon: const Icon(Icons.close_rounded, size: 20),
+      ),
     );
     if (widget.compact) {
       return Column(

@@ -11,7 +11,11 @@ import 'package:currency/main.dart';
 import 'package:currency/rate_cache.dart';
 import 'package:currency/rate_table_preferences.dart';
 import 'package:currency/theme_preference.dart';
+import 'package:flutter/gestures.dart'
+    show PointerDeviceKind, kLongPressTimeout;
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart'
+    show CustomSemanticsAction, SemanticsAction;
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
@@ -100,9 +104,9 @@ void main() {
         for (final direction in ['conversion', 'reverse'])
           _text(tester, Key('$direction-result-$code')),
     ];
-    await _tapAction(tester, 'move-up-GBP');
+    await _srMove(tester, 'GBP', -1);
     expect(_rowCodes(tester), ['USD', 'GBP', 'CZK']);
-    await _tapAction(tester, 'move-down-USD');
+    await _srMove(tester, 'USD', 1);
     expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
     expect(store.value!.targets, ['GBP', 'USD', 'CZK']);
     expect(store.value!.amount, '12,5');
@@ -114,17 +118,9 @@ void main() {
     ], results);
     expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
     final writes = store.writes;
-    expect(
-      tester.widget<IconButton>(find.byKey(const Key('move-up-GBP'))).onPressed,
-      isNull,
-    );
-    expect(
-      tester
-          .widget<IconButton>(find.byKey(const Key('move-down-CZK')))
-          .onPressed,
-      isNull,
-    );
-    await _tapAction(tester, 'move-up-GBP');
+    await _srMove(tester, 'GBP', -1);
+    await _srMove(tester, 'CZK', 1);
+    expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
     expect(store.writes, writes);
     await _pump(tester, handler, preferencesStore: store);
     expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
@@ -138,7 +134,7 @@ void main() {
     await _choose(tester, const Key('add-target-menu'), 'EUR · Euro');
     await tester.pumpAndSettle();
     final beforeEurMove = requests;
-    await _tapAction(tester, 'move-up-EUR');
+    await _srMove(tester, 'EUR', -1);
     expect(requests, beforeEurMove);
     expect(_rowCodes(tester), ['GBP', 'USD', 'EUR', 'CZK']);
     expect(_text(tester, const Key('conversion-result-EUR')), '12,50 EUR');
@@ -150,19 +146,214 @@ void main() {
     for (final code in ['GBP', 'CZK', 'JPY']) {
       await _tapAction(tester, 'remove-$code');
     }
-    for (final direction in ['up', 'down']) {
-      expect(
-        tester
-            .widget<IconButton>(find.byKey(Key('move-$direction-EUR')))
-            .onPressed,
-        isNull,
-      );
-    }
+    final writesAlone = store.writes;
+    await _srMove(tester, 'EUR', -1);
+    await _srMove(tester, 'EUR', 1);
+    expect(store.writes, writesAlone);
+    expect(find.byKey(const Key('move-up-EUR')), findsNothing);
+    expect(find.byKey(const Key('move-down-EUR')), findsNothing);
     await _tapAction(tester, 'remove-EUR');
     expect(_rowCodes(tester), isEmpty);
     expect(store.value!.targets, isEmpty);
     expect(find.byTooltip('Переместить EUR вверх'), findsNothing);
     expect(find.byKey(const Key('add-target-menu')), findsOneWidget);
+  });
+
+  testWidgets('перетаскивание переносит строку за одно действие', (
+    tester,
+  ) async {
+    final store = _FakePreferencesStore();
+    var requests = 0;
+    Future<http.Response> handler(http.Request request) async {
+      requests++;
+      return request.url.path.endsWith('/currencies')
+          ? _catalog()
+          : _rates(request);
+    }
+
+    await _pump(tester, handler, preferencesStore: store);
+    await tester.enterText(find.byKey(const Key('amount-field')), '12,5');
+    await tester.pump();
+    final beforeRequests = requests;
+    List<String> results() => [
+      for (final code in ['USD', 'CZK', 'GBP'])
+        for (final direction in ['conversion', 'reverse'])
+          _text(tester, Key('$direction-result-$code')),
+    ];
+    final before = results();
+    await _drag(tester, 'GBP', 'USD');
+    expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
+    expect(store.value!.targets, ['GBP', 'USD', 'CZK']);
+    await _drag(tester, 'GBP', 'CZK');
+    expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
+    expect(store.value!.targets, ['USD', 'CZK', 'GBP']);
+    expect(results(), before);
+    expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
+    expect(requests, beforeRequests);
+    // Тень наведения не выходит за скруглённые углы рамки таблицы.
+    // Между строками тень не обрезается.
+    RRect clipOf(String code) => tester
+        .widget<ClipRRect>(
+          find
+              .descendant(
+                of: find.byKey(Key('rate-row-$code')),
+                matching: find.byType(ClipRRect),
+              )
+              .first,
+        )
+        .clipper!
+        .getClip(const Size(300, 80));
+    const r = Radius.circular(9);
+    // Узкий экран без шапки: у первой строки скруглён верх.
+    expect(
+      clipOf('USD'),
+      RRect.fromLTRBAndCorners(0, 0, 300, 100, topLeft: r, topRight: r),
+    );
+    expect(clipOf('CZK'), RRect.fromLTRBR(0, -20, 300, 100, Radius.zero));
+    expect(
+      clipOf('GBP'),
+      RRect.fromLTRBAndCorners(0, -20, 300, 80, bottomLeft: r, bottomRight: r),
+    );
+
+    final writes = store.writes;
+    final row = find.byKey(const Key('rate-row-CZK'));
+    final point = tester.getRect(row).centerLeft + const Offset(24, 0);
+    // Удержание и отпускание на месте.
+    final hold = await tester.startGesture(point);
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+    await hold.up();
+    await tester.pumpAndSettle();
+    // Короткое нажатие и свайп без удержания.
+    await tester.tapAt(point);
+    await tester.pumpAndSettle();
+    await tester.dragFrom(point, const Offset(0, -120));
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
+    expect(store.writes, writes);
+
+    await _choose(tester, const Key('add-target-menu'), 'EUR · Euro');
+    await tester.pumpAndSettle();
+    final beforeEurDrag = requests;
+    await _drag(tester, 'EUR', 'USD');
+    expect(_rowCodes(tester), ['EUR', 'USD', 'CZK', 'GBP']);
+    expect(_text(tester, const Key('conversion-result-EUR')), '12,50 EUR');
+    expect(_text(tester, const Key('reverse-result-EUR')), '12,50 EUR');
+    expect(requests, beforeEurDrag);
+    await _tapAction(tester, 'remove-EUR');
+    expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('мышь переносит строку несмотря на дрожание и кликает удаление', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+    final from = tester.getRect(find.byKey(const Key('rate-row-GBP')));
+    final to = tester.getRect(find.byKey(const Key('rate-row-USD')));
+    final mouse = await tester.startGesture(
+      from.centerLeft + const Offset(24, 0),
+      kind: PointerDeviceKind.mouse,
+    );
+    // Рука дрожит на 2 px во время удержания.
+    for (var i = 0; i < 5; i++) {
+      await mouse.moveBy(Offset(i.isEven ? 2 : -2, 1));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+    final dy = to.center.dy - from.center.dy - 8;
+    for (var i = 1; i <= 10; i++) {
+      await mouse.moveBy(Offset(0, dy / 10));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await mouse.up();
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
+    await tester.tap(
+      find.byKey(const Key('remove-USD')),
+      kind: PointerDeviceKind.mouse,
+    );
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester), ['GBP', 'CZK']);
+  });
+
+  testWidgets('перетаскивание к краю экрана прокручивает страницу', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = _FakePreferencesStore(
+      value: const RateTablePreferences(
+        base: 'EUR',
+        targets: ['USD', 'CZK', 'GBP', 'JPY', 'KWD', 'EUR'],
+      ),
+    );
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+      preferencesStore: store,
+    );
+    final row = find.byKey(const Key('rate-row-USD'));
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    // Последние строки за пределами экрана.
+    expect(
+      tester
+          .getRect(find.byKey(const Key('rate-row-EUR'), skipOffstage: false))
+          .top,
+      greaterThan(800),
+    );
+    final touch = await tester.startGesture(
+      tester.getRect(row).topLeft + const Offset(24, 24),
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+    // Ведём строку к нижнему краю и держим, пока страница прокручивается.
+    for (var i = 0; i < 20; i++) {
+      await touch.moveTo(Offset(48, 600 + i * 9.5));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    for (var i = 0; i < 300; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await touch.up();
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester).last, 'USD');
+    expect(store.value!.targets.last, 'USD');
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('диктор получает действия перемещения на русском', (
+    tester,
+  ) async {
+    final semantics = tester.ensureSemantics();
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+    Set<String> actions(String code) => {
+      for (final id
+          in tester
+                  .getSemantics(
+                    find.byKey(Key('rate-row-$code'), skipOffstage: false),
+                  )
+                  .getSemanticsData()
+                  .customSemanticsActionIds ??
+              const <int>[])
+        CustomSemanticsAction.getAction(id)!.label!,
+    };
+    const up = {'Переместить в начало', 'Переместить вверх'};
+    const down = {'Переместить вниз', 'Переместить в конец'};
+    expect(actions('USD'), down);
+    expect(actions('CZK'), {...up, ...down});
+    expect(actions('GBP'), up);
+    semantics.dispose();
   });
 
   testWidgets(
@@ -185,7 +376,7 @@ void main() {
           await _pump(tester, handler, preferencesStore: store);
           await tester.enterText(find.byKey(const Key('amount-field')), input);
           await tester.pump();
-          await _tapAction(tester, 'move-up-CZK');
+          await _srMove(tester, 'CZK', -1);
           expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
           expect(
             tester
@@ -196,7 +387,7 @@ void main() {
           );
           if (failWrite) {
             expect(find.byKey(const Key('preferences-notice')), findsOneWidget);
-            await _tapAction(tester, 'move-down-CZK');
+            await _srMove(tester, 'CZK', 1);
             expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
           } else {
             await _pump(tester, handler, preferencesStore: store);
@@ -228,7 +419,7 @@ void main() {
         }, settle: false);
         await tester.pump();
         await tester.pump();
-        await _tapAction(tester, 'move-up-CZK', settle: false);
+        await _srMove(tester, 'CZK', -1, settle: false);
         expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
         expect(requests, 1);
         pending.complete(
@@ -245,7 +436,7 @@ void main() {
         expect(find.text('Загрузка курса…'), findsNothing);
         if (fails) {
           expect(find.text('Повторить'), findsOneWidget);
-          await _tapAction(tester, 'move-down-CZK');
+          await _srMove(tester, 'CZK', 1);
           expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
         }
         expect(requests, 1);
@@ -253,72 +444,40 @@ void main() {
     },
   );
 
-  testWidgets(
-    'перестановка клавиатурой сохраняет фокус на границах и порядок Tab',
-    (tester) async {
-      tester.view.physicalSize = const Size(1200, 1000);
-      tester.view.devicePixelRatio = 1;
-      addTearDown(tester.view.resetPhysicalSize);
-      addTearDown(tester.view.resetDevicePixelRatio);
-      final semantics = tester.ensureSemantics();
-      await _pump(
-        tester,
-        (r) async =>
-            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
-      );
-      IconButton button(String key) =>
-          tester.widget<IconButton>(find.byKey(Key(key)));
-      button('move-up-CZK').focusNode!.requestFocus();
-      await tester.pump();
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
+  testWidgets('после перетаскивания Tab следует новому порядку', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1200, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final semantics = tester.ensureSemantics();
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+    await _drag(tester, 'GBP', 'USD');
+    expect(_rowCodes(tester), ['GBP', 'USD', 'CZK']);
+    expect(find.byTooltip('Переместить GBP вверх'), findsNothing);
+    await tester.tap(find.byKey(const Key('amount-field')));
+    for (final key in ['remove-GBP', 'remove-USD', 'remove-CZK']) {
+      await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pumpAndSettle();
-      expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
-      expect(button('move-down-CZK').focusNode!.hasFocus, isTrue);
-      expect(button('move-up-CZK').onPressed, isNull);
-      await tester.sendKeyEvent(LogicalKeyboardKey.space);
-      await tester.pumpAndSettle();
-      expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
-      expect(button('move-down-CZK').focusNode!.hasFocus, isTrue);
-      await tester.sendKeyEvent(LogicalKeyboardKey.enter);
-      await tester.pumpAndSettle();
-      expect(_rowCodes(tester), ['USD', 'GBP', 'CZK']);
-      expect(button('move-up-CZK').focusNode!.hasFocus, isTrue);
-      expect(button('move-down-CZK').onPressed, isNull);
       expect(
         tester
-            .getSemantics(find.byKey(const Key('move-up-CZK')))
+            .getSemantics(find.byKey(Key(key)))
             .getSemanticsData()
-            .tooltip,
-        'Переместить CZK вверх',
+            .flagsCollection
+            .isFocused,
+        Tristate.isTrue,
+        reason: key,
       );
-      await tester.tap(find.byKey(const Key('amount-field')));
-      for (final key in [
-        'move-down-USD',
-        'remove-USD',
-        'move-up-GBP',
-        'move-down-GBP',
-        'remove-GBP',
-        'move-up-CZK',
-        'remove-CZK',
-      ]) {
-        await tester.sendKeyEvent(LogicalKeyboardKey.tab);
-        await tester.pumpAndSettle();
-        expect(
-          tester
-              .getSemantics(find.byKey(Key(key)))
-              .getSemanticsData()
-              .flagsCollection
-              .isFocused,
-          Tristate.isTrue,
-          reason: key,
-        );
-      }
-      semantics.dispose();
-    },
-  );
+    }
+    semantics.dispose();
+  });
 
   testWidgets(
-    'кнопки перестановки помещаются при 360 пикселях и масштабе 200%',
+    'перетаскивание строки работает при 360 пикселях и масштабе 200%',
     (tester) async {
       tester.view.physicalSize = const Size(360, 1000);
       tester.view.devicePixelRatio = 1;
@@ -332,21 +491,14 @@ void main() {
           textScale: 2,
           themeStore: _FakeThemeStore(initial: theme),
         );
-        await _tapAction(tester, 'move-up-CZK');
+        await _drag(tester, 'CZK', 'USD');
         expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
         for (final code in _rowCodes(tester)) {
-          Rect? previous;
-          for (final action in ['move-up', 'move-down', 'remove']) {
-            final rect = tester.getRect(find.byKey(Key('$action-$code')));
-            expect(rect.width, greaterThanOrEqualTo(48));
-            expect(rect.height, greaterThanOrEqualTo(48));
-            expect(rect.left, greaterThanOrEqualTo(0));
-            expect(rect.right, lessThanOrEqualTo(360));
-            if (previous != null) {
-              expect(previous.right, lessThanOrEqualTo(rect.left));
-            }
-            previous = rect;
-          }
+          final rect = tester.getRect(find.byKey(Key('remove-$code')));
+          expect(rect.width, greaterThanOrEqualTo(48));
+          expect(rect.height, greaterThanOrEqualTo(48));
+          expect(rect.left, greaterThanOrEqualTo(0));
+          expect(rect.right, lessThanOrEqualTo(360));
         }
         expect(tester.takeException(), isNull);
       }
@@ -530,7 +682,7 @@ void main() {
     expect(menu.dropdownMenuEntries.every((entry) => !entry.enabled), isTrue);
     expect(
       tester
-          .widgetList<RateRow>(find.byType(RateRow))
+          .widgetList<RateRow>(find.byType(RateRow, skipOffstage: false))
           .map((row) => row.currency.code),
       ['USD', 'CZK', 'GBP', 'EUR', 'JPY', 'KWD'],
     );
@@ -655,7 +807,7 @@ void main() {
     }, settle: false);
     await tester.pump();
     await tester.pump();
-    await _tapAction(tester, 'move-up-CZK', settle: false);
+    await _srMove(tester, 'CZK', -1, settle: false);
     for (final direction in ['conversion', 'reverse']) {
       expect(_text(tester, Key('$direction-result-CZK')), 'Загрузка курса…');
     }
@@ -734,7 +886,7 @@ void main() {
     await tester.pump();
     await tester.enterText(find.byKey(const Key('amount-field')), '10');
     await tester.pump();
-    await _tapAction(tester, 'move-up-CZK', settle: false);
+    await _srMove(tester, 'CZK', -1, settle: false);
     refresh.complete(http.Response('unavailable', 503));
     await tester.pumpAndSettle();
     expect(_text(tester, const Key('conversion-result-CZK')), '250,00 CZK');
@@ -742,7 +894,7 @@ void main() {
     expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
     expect(find.textContaining('Показаны предыдущие курсы'), findsOneWidget);
     expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
-    await _tapAction(tester, 'move-down-CZK');
+    await _srMove(tester, 'CZK', 1);
     expect(find.textContaining('Показаны предыдущие курсы'), findsOneWidget);
     expect(calls, 2);
   });
@@ -790,15 +942,7 @@ void main() {
     await tester.enterText(amount, '12');
     await tester.pump();
     expect(FocusManager.instance.primaryFocus, same(focus));
-    for (final key in [
-      'move-down-USD',
-      'remove-USD',
-      'move-up-CZK',
-      'move-down-CZK',
-      'remove-CZK',
-      'move-up-GBP',
-      'remove-GBP',
-    ]) {
+    for (final key in ['remove-USD', 'remove-CZK', 'remove-GBP']) {
       await tester.sendKeyEvent(LogicalKeyboardKey.tab);
       await tester.pumpAndSettle();
       expect(
@@ -1300,8 +1444,8 @@ void main() {
       _text(tester, const Key('conversion-result-CZK')),
       '25 000 000 000 000,00 CZK',
     );
-    expect(find.text('EUR → CZK'), findsOneWidget);
-    expect(find.text('CZK → EUR'), findsOneWidget);
+    expect(find.text('EUR → CZK', skipOffstage: false), findsOneWidget);
+    expect(find.text('CZK → EUR', skipOffstage: false), findsOneWidget);
     expect(
       _text(tester, const Key('reverse-result-CZK')),
       '40 000 000 000,00 EUR',
@@ -1313,14 +1457,16 @@ void main() {
       'remove-CZK',
       'add-target-menu',
     ]) {
-      final finder = find.byKey(Key(key));
+      final finder = find.byKey(Key(key), skipOffstage: false);
       await tester.ensureVisible(finder);
       await tester.pumpAndSettle();
       final rect = tester.getRect(finder);
       expect(rect.left, greaterThanOrEqualTo(0));
       expect(rect.right, lessThanOrEqualTo(360));
     }
-    final size = tester.getSize(find.byKey(const Key('remove-CZK')));
+    final size = tester.getSize(
+      find.byKey(const Key('remove-CZK'), skipOffstage: false),
+    );
     expect(size.width, greaterThanOrEqualTo(48));
     expect(size.height, greaterThanOrEqualTo(48));
     expect(tester.takeException(), isNull);
@@ -1855,9 +2001,58 @@ void main() {
 }
 
 List<String> _rowCodes(WidgetTester tester) => tester
-    .widgetList<RateRow>(find.byType(RateRow))
+    .widgetList<RateRow>(find.byType(RateRow, skipOffstage: false))
     .map((row) => row.currency.code)
     .toList();
+
+/// Перемещает строку на одну позицию действием диктора; на границе
+/// списка действия нет, и порядок не меняется.
+Future<void> _srMove(
+  WidgetTester tester,
+  String code,
+  int direction, {
+  bool settle = true,
+}) async {
+  final handle = tester.ensureSemantics();
+  await tester.pump();
+  final node = tester.getSemantics(
+    find.byKey(Key('rate-row-$code'), skipOffstage: false),
+  );
+  final label = direction < 0 ? 'Переместить вверх' : 'Переместить вниз';
+  for (final id in node.getSemanticsData().customSemanticsActionIds ?? []) {
+    if (CustomSemanticsAction.getAction(id)!.label == label) {
+      node.owner!.performAction(node.id, SemanticsAction.customAction, id);
+    }
+  }
+  if (settle) {
+    await tester.pumpAndSettle();
+  } else {
+    await tester.pump();
+  }
+  handle.dispose();
+}
+
+/// Нажимает и удерживает строку [code], затем отпускает её над строкой [to].
+Future<void> _drag(WidgetTester tester, String code, String to) async {
+  final row = find.byKey(Key('rate-row-$code'), skipOffstage: false);
+  await tester.ensureVisible(row);
+  await tester.pumpAndSettle();
+  final from = tester.getRect(row);
+  final target = tester.getRect(
+    find.byKey(Key('rate-row-$to'), skipOffstage: false),
+  );
+  // Берём строку у левого края, вне кнопки удаления.
+  final start = Offset(from.left + 24, from.center.dy);
+  final dy = target.center.dy - from.center.dy;
+  final gesture = await tester.startGesture(start);
+  await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+  for (var i = 1; i <= 10; i++) {
+    await gesture.moveBy(Offset(0, (dy + dy.sign * 8) / 10));
+    await tester.pump(const Duration(milliseconds: 16));
+  }
+  await gesture.up();
+  await tester.pumpAndSettle();
+}
 
 Future<void> _tapAction(
   WidgetTester tester,
@@ -1887,6 +2082,13 @@ Future<void> _pump(
 }) async {
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  // Строки таблицы — сливер: flutter_test считает строки за экраном
+  // «закадровыми» и не находит их. Тестам без своего размера даём высокий
+  // экран той же ширины (800), чтобы вся таблица была видна.
+  if (tester.view.physicalSize == const Size(2400, 1800)) {
+    tester.view.physicalSize = const Size(2400, 7200);
+    addTearDown(tester.view.resetPhysicalSize);
+  }
   final app = CurrencyApp(
     key: UniqueKey(),
     api: ExchangeRatesApi(client: MockClient(handler), cache: rateCache),
@@ -1959,7 +2161,9 @@ class _FakePreferencesStore implements RateTablePreferencesStore {
 }
 
 Future<void> _choose(WidgetTester tester, Key key, String label) async {
-  final menu = tester.widget<DropdownMenu<String>>(find.byKey(key));
+  final menu = tester.widget<DropdownMenu<String>>(
+    find.byKey(key, skipOffstage: false),
+  );
   final entry = menu.dropdownMenuEntries.singleWhere(
     (entry) => entry.label == label,
   );
@@ -1968,7 +2172,7 @@ Future<void> _choose(WidgetTester tester, Key key, String label) async {
 }
 
 String _text(WidgetTester tester, Key key) {
-  final widget = tester.widget(find.byKey(key));
+  final widget = tester.widget(find.byKey(key, skipOffstage: false));
   final String text = switch (widget) {
     SelectableText(:final data, :final textSpan) =>
       data ?? textSpan?.toPlainText() ?? '',

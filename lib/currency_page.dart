@@ -1,7 +1,9 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart' show ScrollCacheExtent;
 import 'package:intl/intl.dart';
 
 import 'conversion.dart';
@@ -271,56 +273,73 @@ class _CurrencyPageState extends State<CurrencyPage> {
     final horizontalPadding = MediaQuery.sizeOf(context).width < 600
         ? 20.0
         : 48.0;
+    // Список строк — сливер прокрутки страницы: так перетаскивание у края
+    // экрана само прокручивает страницу.
     return Scaffold(
       body: SafeArea(
         child: Scrollbar(
-          child: SingleChildScrollView(
+          child: CustomScrollView(
             primary: true,
-            padding: EdgeInsets.fromLTRB(
-              horizontalPadding,
-              40,
-              horizontalPadding,
-              48,
-            ),
-            child: Align(
-              alignment: Alignment.topCenter,
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 1040),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildHeader(context),
-                    if (_preferencesNotice != null) ...[
-                      const SizedBox(height: 24),
-                      Semantics(
-                        key: const Key('preferences-notice'),
-                        liveRegion: true,
-                        child: _InlineNotice(
-                          icon: Icons.warning_amber_rounded,
-                          text: _preferencesNotice!,
+            // ponytail: строим всю страницу, как прежний SingleChildScrollView:
+            // иначе строки за экраном недоступны для Tab и диктора. Валют
+            // десятки, а не тысячи; при росте — вернуть ленивую отрисовку.
+            scrollCacheExtent: const ScrollCacheExtent.pixels(1e6),
+            slivers: [
+              SliverLayoutBuilder(
+                builder: (context, constraints) {
+                  // Колонка шириной до 1040, по центру.
+                  final side = math.max(
+                    horizontalPadding,
+                    (constraints.crossAxisExtent - 1040) / 2,
+                  );
+                  return SliverPadding(
+                    padding: EdgeInsets.fromLTRB(side, 40, side, 48),
+                    sliver: SliverMainAxisGroup(
+                      slivers: [
+                        SliverToBoxAdapter(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              _buildHeader(context),
+                              if (_preferencesNotice != null) ...[
+                                const SizedBox(height: 24),
+                                Semantics(
+                                  key: const Key('preferences-notice'),
+                                  liveRegion: true,
+                                  child: _InlineNotice(
+                                    icon: Icons.warning_amber_rounded,
+                                    text: _preferencesNotice!,
+                                  ),
+                                ),
+                                const SizedBox(height: 32),
+                              ] else
+                                const SizedBox(height: 40),
+                              if (_catalogLoading)
+                                const _CatalogLoading()
+                              else if (_catalogError != null)
+                                _FailureBanner(
+                                  message: _catalogError!,
+                                  onRetry: _loadCurrencies,
+                                )
+                              else if (_currencies.isEmpty)
+                                _FailureBanner(
+                                  message:
+                                      'Источник не вернул доступные валюты.',
+                                  onRetry: _loadCurrencies,
+                                ),
+                            ],
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 32),
-                    ] else
-                      const SizedBox(height: 40),
-                    if (_catalogLoading)
-                      const _CatalogLoading()
-                    else if (_catalogError != null)
-                      _FailureBanner(
-                        message: _catalogError!,
-                        onRetry: _loadCurrencies,
-                      )
-                    else if (_currencies.isEmpty)
-                      _FailureBanner(
-                        message: 'Источник не вернул доступные валюты.',
-                        onRetry: _loadCurrencies,
-                      )
-                    else
-                      _buildRates(context),
-                  ],
-                ),
+                        if (!_catalogLoading &&
+                            _catalogError == null &&
+                            _currencies.isNotEmpty)
+                          ..._buildRates(context),
+                      ],
+                    ),
+                  );
+                },
               ),
-            ),
+            ],
           ),
         ),
       ),
@@ -408,120 +427,126 @@ class _CurrencyPageState extends State<CurrencyPage> {
     );
   }
 
-  Widget _buildRates(BuildContext context) {
+  List<Widget> _buildRates(BuildContext context) {
     final amount = parseAmount(_amountController.text);
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        TextField(
-          key: const Key('amount-field'),
-          controller: _amountController,
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-          textInputAction: TextInputAction.done,
-          style: const TextStyle(
-            fontSize: 17,
-            fontFeatures: [FontFeature.tabularFigures()],
-          ),
-          decoration: InputDecoration(
-            labelText: 'Сумма',
-            hintText: 'Например, 3 000,50',
-            helperText: amount.status == AmountStatus.empty
-                ? 'Введите сумму'
-                : null,
-            errorText: amount.status == AmountStatus.invalid
-                ? amount.error
-                : null,
-            errorMaxLines: 3,
-          ),
-          onChanged: (_) {
-            setState(() {});
-            if (parseAmount(_amountController.text).status ==
-                AmountStatus.valid) {
-              _persistRateTablePreferences();
-            }
-          },
-        ),
-        const SizedBox(height: 16),
-        const Text(
-          'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
-        ),
-        const SizedBox(height: 24),
-        if (_tableError != null) ...[
-          _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
-          const SizedBox(height: 16),
-        ],
-        if (_targets.isEmpty)
-          const _EmptyRates()
-        else
-          Semantics(
-            key: const Key('conversion-semantics'),
-            liveRegion: true,
-            container: true,
-            explicitChildNodes: true,
-            child: Container(
-              decoration: BoxDecoration(
-                color: Theme.of(context).brightness == Brightness.dark
-                    ? Theme.of(context).colorScheme.surfaceContainerLow
-                    : Theme.of(context).colorScheme.surface,
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(
-                  color: Theme.of(context).colorScheme.outlineVariant,
-                ),
+    final surface = Theme.of(context).brightness == Brightness.dark
+        ? Theme.of(context).colorScheme.surfaceContainerLow
+        : Theme.of(context).colorScheme.surface;
+    return [
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              key: const Key('amount-field'),
+              controller: _amountController,
+              keyboardType: const TextInputType.numberWithOptions(
+                decimal: true,
               ),
-              clipBehavior: Clip.antiAlias,
-              child: LayoutBuilder(
-                builder: (context, constraints) {
-                  final compact =
-                      constraints.maxWidth < 900 ||
-                      MediaQuery.textScalerOf(context).scale(17) > 25;
-                  return FocusTraversalGroup(
+              textInputAction: TextInputAction.done,
+              style: const TextStyle(
+                fontSize: 17,
+                fontFeatures: [FontFeature.tabularFigures()],
+              ),
+              decoration: InputDecoration(
+                labelText: 'Сумма',
+                hintText: 'Например, 3 000,50',
+                helperText: amount.status == AmountStatus.empty
+                    ? 'Введите сумму'
+                    : null,
+                errorText: amount.status == AmountStatus.invalid
+                    ? amount.error
+                    : null,
+                errorMaxLines: 3,
+              ),
+              onChanged: (_) {
+                setState(() {});
+                if (parseAmount(_amountController.text).status ==
+                    AmountStatus.valid) {
+                  _persistRateTablePreferences();
+                }
+              },
+            ),
+            const SizedBox(height: 16),
+            const Text(
+              'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
+            ),
+            const SizedBox(height: 24),
+            if (_tableError != null) ...[
+              _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
+              const SizedBox(height: 16),
+            ],
+            if (_targets.isEmpty) const _EmptyRates(),
+          ],
+        ),
+      ),
+      if (_targets.isNotEmpty)
+        SliverLayoutBuilder(
+          builder: (context, constraints) {
+            final compact =
+                constraints.crossAxisExtent < 900 ||
+                MediaQuery.textScalerOf(context).scale(17) > 25;
+            return SliverSemantics(
+              key: const Key('conversion-semantics'),
+              liveRegion: true,
+              container: true,
+              explicitChildNodes: true,
+              sliver: DecoratedSliver(
+                decoration: BoxDecoration(
+                  color: surface,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: Theme.of(context).colorScheme.outlineVariant,
+                  ),
+                ),
+                sliver: SliverPadding(
+                  // Отступ под рамку, как у Container с BoxDecoration.
+                  padding: const EdgeInsets.all(1),
+                  sliver: FocusTraversalGroup(
                     policy: ReadingOrderTraversalPolicy(),
-                    child: Column(
-                      children: [
-                        if (!compact) ...[
-                          const Padding(
-                            padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
-                            child: Row(
+                    child: SliverMainAxisGroup(
+                      slivers: [
+                        if (!compact)
+                          SliverToBoxAdapter(
+                            child: Column(
                               children: [
-                                Expanded(flex: 3, child: Text('Валюта')),
-                                SizedBox(width: 20),
-                                Expanded(flex: 4, child: Text('Курс')),
-                                SizedBox(width: 20),
-                                Expanded(
-                                  flex: 3,
-                                  child: Text(
-                                    'EUR → валюта',
-                                    textAlign: TextAlign.right,
+                                const Padding(
+                                  padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
+                                  child: Row(
+                                    children: [
+                                      Expanded(flex: 3, child: Text('Валюта')),
+                                      SizedBox(width: 20),
+                                      Expanded(flex: 4, child: Text('Курс')),
+                                      SizedBox(width: 20),
+                                      Expanded(
+                                        flex: 3,
+                                        child: Text(
+                                          'EUR → валюта',
+                                          textAlign: TextAlign.right,
+                                        ),
+                                      ),
+                                      SizedBox(width: 20),
+                                      Expanded(
+                                        flex: 3,
+                                        child: Text(
+                                          'Валюта → EUR',
+                                          textAlign: TextAlign.right,
+                                        ),
+                                      ),
+                                      SizedBox(width: 56),
+                                    ],
                                   ),
                                 ),
-                                SizedBox(width: 20),
-                                Expanded(
-                                  flex: 3,
-                                  child: Text(
-                                    'Валюта → EUR',
-                                    textAlign: TextAlign.right,
-                                  ),
-                                ),
-                                SizedBox(width: 56),
+                                const Divider(height: 1),
                               ],
                             ),
                           ),
-                          const Divider(height: 1),
-                        ],
-                        ReorderableListView.builder(
-                          shrinkWrap: true,
-                          physics: const NeverScrollableScrollPhysics(),
-                          buildDefaultDragHandles: false,
+                        SliverReorderableList(
                           itemCount: _targets.length,
                           onReorderItem: _reorderTarget,
                           proxyDecorator: (child, _, _) => Material(
                             elevation: 6,
-                            color:
-                                Theme.of(context).brightness == Brightness.dark
-                                ? Theme.of(context)
-                                      .colorScheme
-                                      .surfaceContainerLow
-                                : Theme.of(context).colorScheme.surface,
+                            color: surface,
                             child: child,
                           ),
                           itemBuilder: (context, index) {
@@ -555,38 +580,45 @@ class _CurrencyPageState extends State<CurrencyPage> {
                         ),
                       ],
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
+            );
+          },
+        ),
+      SliverToBoxAdapter(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (_tableRefreshWarning) ...[
+              const SizedBox(height: 12),
+              const _InlineNotice(
+                icon: Icons.info_outline_rounded,
+                text: 'Не удалось обновить. Показаны предыдущие курсы.',
+              ),
+            ],
+            const SizedBox(height: 24),
+            CurrencyMenu(
+              key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
+              fieldKey: const Key('add-target-menu'),
+              label: 'Добавить валюту',
+              currencies: _currencies,
+              disabledCodes: _targets.toSet(),
+              onSelected: _addTarget,
             ),
-          ),
-        if (_tableRefreshWarning) ...[
-          const SizedBox(height: 12),
-          const _InlineNotice(
-            icon: Icons.info_outline_rounded,
-            text: 'Не удалось обновить. Показаны предыдущие курсы.',
-          ),
-        ],
-        const SizedBox(height: 24),
-        CurrencyMenu(
-          key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
-          fieldKey: const Key('add-target-menu'),
-          label: 'Добавить валюту',
-          currencies: _currencies,
-          disabledCodes: _targets.toSet(),
-          onSelected: _addTarget,
+            if (_targets.length == _currencies.length) ...[
+              const SizedBox(height: 8),
+              const Text('Все валюты уже добавлены.'),
+            ],
+            const SizedBox(height: 18),
+            Text(
+              'Источник: Frankfurter. Ежедневные справочные курсы; банковские комиссии не учитываются.',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ],
         ),
-        if (_targets.length == _currencies.length) ...[
-          const SizedBox(height: 8),
-          const Text('Все валюты уже добавлены.'),
-        ],
-        const SizedBox(height: 18),
-        Text(
-          'Источник: Frankfurter. Ежедневные справочные курсы; банковские комиссии не учитываются.',
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-      ],
-    );
+      ),
+    ];
   }
 }
 

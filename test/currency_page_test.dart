@@ -258,6 +258,53 @@ void main() {
     expect(_rowCodes(tester), ['GBP', 'CZK']);
   });
 
+  testWidgets('перетаскивание к краю экрана прокручивает страницу', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(400, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final store = _FakePreferencesStore(
+      value: const RateTablePreferences(
+        base: 'EUR',
+        targets: ['USD', 'CZK', 'GBP', 'JPY', 'KWD', 'EUR'],
+      ),
+    );
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+      preferencesStore: store,
+    );
+    final row = find.byKey(const Key('rate-row-USD'));
+    await tester.ensureVisible(row);
+    await tester.pumpAndSettle();
+    // Последние строки за пределами экрана.
+    expect(
+      tester
+          .getRect(find.byKey(const Key('rate-row-EUR'), skipOffstage: false))
+          .top,
+      greaterThan(800),
+    );
+    final touch = await tester.startGesture(
+      tester.getRect(row).topLeft + const Offset(24, 24),
+    );
+    await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
+    // Ведём строку к нижнему краю и держим, пока страница прокручивается.
+    for (var i = 0; i < 20; i++) {
+      await touch.moveTo(Offset(48, 600 + i * 9.5));
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    for (var i = 0; i < 300; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await touch.up();
+    await tester.pumpAndSettle();
+    expect(_rowCodes(tester).last, 'USD');
+    expect(store.value!.targets.last, 'USD');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('диктор получает действия перемещения на русском', (
     tester,
   ) async {
@@ -269,7 +316,9 @@ void main() {
     Set<String> actions(String code) => {
       for (final id
           in tester
-                  .getSemantics(find.byKey(Key('rate-row-$code')))
+                  .getSemantics(
+                    find.byKey(Key('rate-row-$code'), skipOffstage: false),
+                  )
                   .getSemanticsData()
                   .customSemanticsActionIds ??
               const <int>[])
@@ -609,7 +658,7 @@ void main() {
     expect(menu.dropdownMenuEntries.every((entry) => !entry.enabled), isTrue);
     expect(
       tester
-          .widgetList<RateRow>(find.byType(RateRow))
+          .widgetList<RateRow>(find.byType(RateRow, skipOffstage: false))
           .map((row) => row.currency.code),
       ['USD', 'CZK', 'GBP', 'EUR', 'JPY', 'KWD'],
     );
@@ -1371,8 +1420,8 @@ void main() {
       _text(tester, const Key('conversion-result-CZK')),
       '25 000 000 000 000,00 CZK',
     );
-    expect(find.text('EUR → CZK'), findsOneWidget);
-    expect(find.text('CZK → EUR'), findsOneWidget);
+    expect(find.text('EUR → CZK', skipOffstage: false), findsOneWidget);
+    expect(find.text('CZK → EUR', skipOffstage: false), findsOneWidget);
     expect(
       _text(tester, const Key('reverse-result-CZK')),
       '40 000 000 000,00 EUR',
@@ -1384,14 +1433,16 @@ void main() {
       'remove-CZK',
       'add-target-menu',
     ]) {
-      final finder = find.byKey(Key(key));
+      final finder = find.byKey(Key(key), skipOffstage: false);
       await tester.ensureVisible(finder);
       await tester.pumpAndSettle();
       final rect = tester.getRect(finder);
       expect(rect.left, greaterThanOrEqualTo(0));
       expect(rect.right, lessThanOrEqualTo(360));
     }
-    final size = tester.getSize(find.byKey(const Key('remove-CZK')));
+    final size = tester.getSize(
+      find.byKey(const Key('remove-CZK'), skipOffstage: false),
+    );
     expect(size.width, greaterThanOrEqualTo(48));
     expect(size.height, greaterThanOrEqualTo(48));
     expect(tester.takeException(), isNull);
@@ -1926,7 +1977,7 @@ void main() {
 }
 
 List<String> _rowCodes(WidgetTester tester) => tester
-    .widgetList<RateRow>(find.byType(RateRow))
+    .widgetList<RateRow>(find.byType(RateRow, skipOffstage: false))
     .map((row) => row.currency.code)
     .toList();
 
@@ -1940,7 +1991,9 @@ Future<void> _srMove(
 }) async {
   final handle = tester.ensureSemantics();
   await tester.pump();
-  final node = tester.getSemantics(find.byKey(Key('rate-row-$code')));
+  final node = tester.getSemantics(
+    find.byKey(Key('rate-row-$code'), skipOffstage: false),
+  );
   final label = direction < 0 ? 'Переместить вверх' : 'Переместить вниз';
   for (final id in node.getSemanticsData().customSemanticsActionIds ?? []) {
     if (CustomSemanticsAction.getAction(id)!.label == label) {
@@ -1957,11 +2010,13 @@ Future<void> _srMove(
 
 /// Нажимает и удерживает строку [code], затем отпускает её над строкой [to].
 Future<void> _drag(WidgetTester tester, String code, String to) async {
-  final row = find.byKey(Key('rate-row-$code'));
+  final row = find.byKey(Key('rate-row-$code'), skipOffstage: false);
   await tester.ensureVisible(row);
   await tester.pumpAndSettle();
   final from = tester.getRect(row);
-  final target = tester.getRect(find.byKey(Key('rate-row-$to')));
+  final target = tester.getRect(
+    find.byKey(Key('rate-row-$to'), skipOffstage: false),
+  );
   // Берём строку у левого края, вне кнопки удаления.
   final start = Offset(from.left + 24, from.center.dy);
   final dy = target.center.dy - from.center.dy;
@@ -2003,6 +2058,13 @@ Future<void> _pump(
 }) async {
   tester.platformDispatcher.textScaleFactorTestValue = textScale;
   addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+  // Строки таблицы — сливер: flutter_test считает строки за экраном
+  // «закадровыми» и не находит их. Тестам без своего размера даём высокий
+  // экран той же ширины (800), чтобы вся таблица была видна.
+  if (tester.view.physicalSize == const Size(2400, 1800)) {
+    tester.view.physicalSize = const Size(2400, 7200);
+    addTearDown(tester.view.resetPhysicalSize);
+  }
   final app = CurrencyApp(
     key: UniqueKey(),
     api: ExchangeRatesApi(client: MockClient(handler), cache: rateCache),
@@ -2075,7 +2137,9 @@ class _FakePreferencesStore implements RateTablePreferencesStore {
 }
 
 Future<void> _choose(WidgetTester tester, Key key, String label) async {
-  final menu = tester.widget<DropdownMenu<String>>(find.byKey(key));
+  final menu = tester.widget<DropdownMenu<String>>(
+    find.byKey(key, skipOffstage: false),
+  );
   final entry = menu.dropdownMenuEntries.singleWhere(
     (entry) => entry.label == label,
   );
@@ -2084,7 +2148,7 @@ Future<void> _choose(WidgetTester tester, Key key, String label) async {
 }
 
 String _text(WidgetTester tester, Key key) {
-  final widget = tester.widget(find.byKey(key));
+  final widget = tester.widget(find.byKey(key, skipOffstage: false));
   final String text = switch (widget) {
     SelectableText(:final data, :final textSpan) =>
       data ?? textSpan?.toPlainText() ?? '',

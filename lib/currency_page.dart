@@ -353,12 +353,20 @@ class _CurrencyPageState extends State<CurrencyPage> {
       ThemePreference.light => 'Светлая',
       ThemePreference.dark => 'Тёмная',
     };
-    return Wrap(
-      spacing: 8,
-      runSpacing: 12,
-      crossAxisAlignment: WrapCrossAlignment.center,
+    final title = Theme.of(context).textTheme.displaySmall;
+    // Иконки всегда в строке заголовка: Wrap уносил переключатель темы
+    // на отдельную строку на телефоне.
+    return Row(
       children: [
-        Text('Курсы валют', style: Theme.of(context).textTheme.displaySmall),
+        Flexible(
+          child: Text(
+            'Курсы валют',
+            style: MediaQuery.sizeOf(context).width < 600
+                ? title?.copyWith(fontSize: 32, letterSpacing: -0.9)
+                : title,
+          ),
+        ),
+        const SizedBox(width: 8),
         IconButton(
           key: const Key('refresh-button'),
           onPressed: _refreshAll,
@@ -368,8 +376,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
                   dimension: 22,
                   child: CircularProgressIndicator(strokeWidth: 2.5),
                 )
-              : const Icon(Icons.refresh_rounded, size: 20),
+              : const Icon(Icons.refresh_rounded, size: 22),
         ),
+        const SizedBox(width: 4),
         MenuAnchor(
           childFocusNode: _themeFocus,
           onClose: () => _themeFocus.requestFocus(),
@@ -830,20 +839,47 @@ class _RateRowState extends State<RateRow> {
       ),
     );
     if (widget.compact) {
+      // Крестик рядом с названием, обе суммы в одну строку: карточка
+      // на телефоне вдвое ниже прежней колонки из пяти блоков.
+      Widget labelled(String label, Widget value) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(label, style: Theme.of(context).textTheme.bodyMedium),
+          const SizedBox(height: 2),
+          value,
+        ],
+      );
       return Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          name,
-          Align(alignment: Alignment.centerRight, child: actions),
-          const SizedBox(height: 14),
-          const Text('Курс'),
-          details,
-          const SizedBox(height: 14),
-          Text('${widget.base} → ${widget.currency.code}'),
-          _result(context),
-          const SizedBox(height: 14),
-          Text('${widget.currency.code} → ${widget.base}'),
-          _result(context, reverse: true),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(child: name),
+              actions,
+            ],
+          ),
+          const SizedBox(height: 12),
+          labelled('Курс', details),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: labelled(
+                  '${widget.base} → ${widget.currency.code}',
+                  _result(context),
+                ),
+              ),
+              const SizedBox(width: 16),
+              Expanded(
+                child: labelled(
+                  '${widget.currency.code} → ${widget.base}',
+                  _result(context, reverse: true),
+                ),
+              ),
+            ],
+          ),
         ],
       );
     }

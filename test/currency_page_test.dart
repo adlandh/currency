@@ -1998,6 +1998,61 @@ void main() {
       expect(tester.takeException(), isNull);
     }
   });
+
+  testWidgets('на телефоне кнопки шапки в ряду с уменьшенным заголовком', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+
+    final title = find.text('Курсы валют');
+    final titleRect = tester.getRect(title);
+    for (final key in ['refresh-button', 'theme-toggle-button']) {
+      final rect = tester.getRect(find.byKey(Key(key)));
+      expect(rect.top, lessThan(titleRect.bottom), reason: key);
+      expect(rect.left, greaterThan(titleRect.left), reason: key);
+      expect(rect.right, lessThanOrEqualTo(375), reason: key);
+    }
+    expect(tester.widget<Text>(title).style?.fontSize, 32);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('компактная строка: удаление рядом с кодом, результаты рядом', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(375, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    await _pump(
+      tester,
+      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+    );
+
+    final code = tester.getRect(
+      find.descendant(
+        of: find.byKey(const Key('rate-row-USD')),
+        matching: find.text('USD'),
+      ),
+    );
+    final remove = tester.getRect(find.byKey(const Key('remove-USD')));
+    expect(remove.top, lessThan(code.bottom));
+    expect(remove.bottom, greaterThan(code.top));
+
+    final forward = tester.getRect(
+      find.byKey(const Key('conversion-result-USD')),
+    );
+    final reverse = tester.getRect(find.byKey(const Key('reverse-result-USD')));
+    expect(reverse.top, forward.top);
+    expect(reverse.left, greaterThan(forward.left));
+    expect(tester.takeException(), isNull);
+  });
 }
 
 List<String> _rowCodes(WidgetTester tester) => tester

@@ -2044,6 +2044,42 @@ void main() {
     expect(find.textContaining('За 3 сентября'), findsOneWidget);
   });
 
+  testWidgets('на телефоне текст строки крупнее, широкая таблица прежняя', (
+    tester,
+  ) async {
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    double? size(Finder finder) => tester
+        .widget<Text>(
+          find.descendant(
+            of: find.byKey(const Key('rate-row-USD')),
+            matching: finder,
+          ),
+        )
+        .style
+        ?.fontSize;
+    for (final (width, forward, code, reverse, small) in [
+      (375.0, 24.0, 21.0, 21.0, 19.0),
+      (1200.0, 20.0, 17.0, 17.0, 17.0),
+    ]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+      );
+      expect(size(find.byKey(const Key('conversion-result-USD'))), forward);
+      expect(size(find.byKey(const Key('reverse-result-USD'))), reverse);
+      expect(size(find.text('USD')), code);
+      // Курс в широкой таблице — 17 px, название — 15 px, как раньше.
+      expect(size(find.byKey(const Key('rate-USD'))), small);
+      expect(size(find.text('US Dollar')), width < 600 ? 19 : 15);
+      if (width < 600) expect(size(find.text('USD → EUR')), 19);
+      expect(tester.takeException(), isNull);
+    }
+  });
+
   testWidgets(
     'компактная строка: обратный результат под прямым, левее крестика',
     (tester) async {
@@ -2074,9 +2110,11 @@ void main() {
       final reverse = tester.getRect(
         find.byKey(const Key('reverse-result-USD')),
       );
-      // Прямой результат — в линии с кодом, обратный — под ним, оба левее
-      // крестика.
-      expect(forward.top, lessThan(code.bottom));
+      // Прямой результат — в линии с кодом либо (не поместился) сразу под
+      // ним; обратный — ниже прямого, оба левее крестика. Тестовый шрифт
+      // шире настоящего, поэтому «строго в одну линию» не проверяем.
+      expect(forward.top, greaterThanOrEqualTo(code.top));
+      expect(forward.top, lessThanOrEqualTo(code.bottom));
       expect(reverse.top, greaterThanOrEqualTo(forward.bottom));
       expect(forward.right, lessThanOrEqualTo(remove.left));
       expect(reverse.right, lessThanOrEqualTo(remove.left));

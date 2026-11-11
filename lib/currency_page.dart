@@ -906,13 +906,18 @@ class _RateRowState extends State<RateRow> {
     );
   }
 
+  /// На телефоне текст строки крупнее (+4 px), чтобы читался без очков;
+  /// широкая таблица остаётся с размерами темы.
+  TextStyle? _sized(TextStyle? style, double compactSize) =>
+      widget.compact ? style?.copyWith(fontSize: compactSize) : style;
+
   Widget _content(BuildContext context) {
     final details = _details(context);
     final colors = Theme.of(context).colorScheme;
-    final muted = Theme.of(context).textTheme.bodyMedium;
+    final muted = _sized(Theme.of(context).textTheme.bodyMedium, 19);
     final code = Text(
       widget.currency.code,
-      style: Theme.of(context).textTheme.titleMedium,
+      style: _sized(Theme.of(context).textTheme.titleMedium, 21),
     );
     final currencyName = Text(widget.currency.name, style: muted);
     final actions = SizedBox.square(
@@ -936,9 +941,10 @@ class _RateRowState extends State<RateRow> {
     );
     if (widget.compact) {
       // Главное — сумма в валюте строки; обратный пересчёт и курс — тише.
-      // Три линии «слева валюта — справа результат». Wrap роняет правую
-      // часть на свою линию, когда пара не помещается (длинная сумма,
-      // крупный текст), — без переполнения.
+      // Подпись направления стоит в одной линии со своей суммой, чтобы
+      // при переносе они не разъезжались. Wrap роняет правую часть на
+      // свою линию, когда пара не помещается (длинная сумма, крупный
+      // текст), — без переполнения.
       Widget line(Widget left, Widget right) => Wrap(
         alignment: WrapAlignment.spaceBetween,
         crossAxisAlignment: WrapCrossAlignment.center,
@@ -952,14 +958,16 @@ class _RateRowState extends State<RateRow> {
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 line(code, _result(context)),
+                currencyName,
+                details,
+                const SizedBox(height: 4),
                 line(
-                  currencyName,
                   Text(
                     '${widget.currency.code} → ${widget.base}',
                     style: muted,
                   ),
+                  _result(context, reverse: true),
                 ),
-                line(details, _result(context, reverse: true)),
               ],
             ),
           ),
@@ -1018,10 +1026,12 @@ class _RateRowState extends State<RateRow> {
       textAlign: TextAlign.right,
       // Прямой результат — самое крупное число строки, обратный — обычным.
       style: reverse
-          ? Theme.of(context).textTheme.bodyLarge
-                ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()])
+          ? _sized(
+              Theme.of(context).textTheme.bodyLarge,
+              21,
+            )?.copyWith(fontFeatures: const [FontFeature.tabularFigures()])
           : Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: 20,
+              fontSize: widget.compact ? 24 : 20,
               letterSpacing: -0.3,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
@@ -1035,15 +1045,15 @@ class _RateRowState extends State<RateRow> {
         : widget.loading && !widget.missing
         ? 'Загрузка курса…'
         : 'Курс недоступен';
+    final muted = _sized(Theme.of(context).textTheme.bodyMedium, 19);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           value,
+          key: Key('rate-${widget.currency.code}'),
           style:
-              (widget.compact
-                      ? Theme.of(context).textTheme.bodyMedium
-                      : Theme.of(context).textTheme.bodyLarge)
+              (widget.compact ? muted : Theme.of(context).textTheme.bodyLarge)
                   ?.copyWith(
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
@@ -1052,15 +1062,12 @@ class _RateRowState extends State<RateRow> {
           const SizedBox(height: 4),
           Text(
             'За ${DateFormat.yMMMMd('ru_RU').format(widget.rate!.date)}',
-            style: Theme.of(context).textTheme.bodyMedium,
+            style: muted,
           ),
         ],
         if (widget.identity) ...[
           const SizedBox(height: 4),
-          Text(
-            'Тождественный курс',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          Text('Тождественный курс', style: muted),
         ],
       ],
     );

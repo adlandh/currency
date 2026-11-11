@@ -1024,17 +1024,17 @@ class _RateRowState extends State<RateRow> {
       ),
       semanticsLabel: 'Результат конвертации $from → $to: $result',
       textAlign: TextAlign.right,
-      // Прямой результат — самое крупное число строки, обратный — обычным.
-      style: reverse
-          ? _sized(
-              Theme.of(context).textTheme.bodyLarge,
-              21,
-            )?.copyWith(fontFeatures: const [FontFeature.tabularFigures()])
-          : Theme.of(context).textTheme.titleMedium?.copyWith(
-              fontSize: widget.compact ? 24 : 20,
-              letterSpacing: -0.3,
-              fontFeatures: const [FontFeature.tabularFigures()],
-            ),
+      // Оба результата одного размера; прямой выделен полужирным,
+      // обратный — обычным начертанием.
+      style:
+          (reverse
+                  ? Theme.of(context).textTheme.bodyLarge
+                  : Theme.of(context).textTheme.titleMedium)
+              ?.copyWith(
+                fontSize: widget.compact ? 24 : 20,
+                letterSpacing: -0.3,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
     );
   }
 

@@ -2044,7 +2044,7 @@ void main() {
     expect(find.textContaining('За 3 сентября'), findsOneWidget);
   });
 
-  testWidgets('на телефоне текст строки крупнее, широкая таблица прежняя', (
+  testWidgets('на телефоне текст строки крупнее, результаты одного размера', (
     tester,
   ) async {
     tester.view.devicePixelRatio = 1;
@@ -2060,8 +2060,8 @@ void main() {
         .style
         ?.fontSize;
     for (final (width, forward, code, reverse, small) in [
-      (375.0, 24.0, 21.0, 21.0, 19.0),
-      (1200.0, 20.0, 17.0, 17.0, 17.0),
+      (375.0, 24.0, 21.0, 24.0, 19.0),
+      (1200.0, 20.0, 17.0, 20.0, 17.0),
     ]) {
       tester.view.physicalSize = Size(width, 1000);
       await _pump(
@@ -2071,6 +2071,13 @@ void main() {
       );
       expect(size(find.byKey(const Key('conversion-result-USD'))), forward);
       expect(size(find.byKey(const Key('reverse-result-USD'))), reverse);
+      // Результаты одного размера, прямой — жирнее обратного.
+      FontWeight? weight(String key) =>
+          tester.widget<Text>(find.byKey(Key(key))).style?.fontWeight;
+      expect(
+        weight('conversion-result-USD')!.value,
+        greaterThan(weight('reverse-result-USD')?.value ?? 400),
+      );
       expect(size(find.text('USD')), code);
       // Курс в широкой таблице — 17 px, название — 15 px, как раньше.
       expect(size(find.byKey(const Key('rate-USD'))), small);

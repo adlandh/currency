@@ -116,7 +116,7 @@ void main() {
         for (final direction in ['conversion', 'reverse'])
           _text(tester, Key('$direction-result-$code')),
     ], results);
-    expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
+    expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
     final writes = store.writes;
     await _srMove(tester, 'GBP', -1);
     await _srMove(tester, 'CZK', 1);
@@ -188,7 +188,7 @@ void main() {
     expect(_rowCodes(tester), ['USD', 'CZK', 'GBP']);
     expect(store.value!.targets, ['USD', 'CZK', 'GBP']);
     expect(results(), before);
-    expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
+    expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
     expect(requests, beforeRequests);
     // Тень наведения не выходит за скруглённые углы рамки таблицы.
     // Между строками тень не обрезается.
@@ -203,17 +203,15 @@ void main() {
         )
         .clipper!
         .getClip(const Size(300, 80));
-    const r = Radius.circular(9);
+    const r = Radius.circular(11);
     // Узкий экран без шапки: у первой строки скруглён верх.
     expect(
       clipOf('USD'),
       RRect.fromLTRBAndCorners(0, 0, 300, 100, topLeft: r, topRight: r),
     );
     expect(clipOf('CZK'), RRect.fromLTRBR(0, -20, 300, 100, Radius.zero));
-    expect(
-      clipOf('GBP'),
-      RRect.fromLTRBAndCorners(0, -20, 300, 80, bottomLeft: r, bottomRight: r),
-    );
+    // Низ таблицы — строка добавления: последняя строка валют не у края.
+    expect(clipOf('GBP'), RRect.fromLTRBR(0, -20, 300, 100, Radius.zero));
 
     final writes = store.writes;
     final row = find.byKey(const Key('rate-row-CZK'));
@@ -285,7 +283,7 @@ void main() {
   testWidgets('перетаскивание к краю экрана прокручивает страницу', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(400, 800);
+    tester.view.physicalSize = const Size(400, 600);
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
@@ -308,7 +306,7 @@ void main() {
       tester
           .getRect(find.byKey(const Key('rate-row-EUR'), skipOffstage: false))
           .top,
-      greaterThan(800),
+      greaterThan(600),
     );
     final touch = await tester.startGesture(
       tester.getRect(row).topLeft + const Offset(24, 24),
@@ -316,7 +314,7 @@ void main() {
     await tester.pump(kLongPressTimeout + const Duration(milliseconds: 50));
     // Ведём строку к нижнему краю и держим, пока страница прокручивается.
     for (var i = 0; i < 20; i++) {
-      await touch.moveTo(Offset(48, 600 + i * 9.5));
+      await touch.moveTo(Offset(48, 400 + i * 9.5));
       await tester.pump(const Duration(milliseconds: 16));
     }
     for (var i = 0; i < 300; i++) {
@@ -589,14 +587,8 @@ void main() {
         expect(_text(tester, Key('conversion-result-$code')), status);
         expect(_text(tester, Key('reverse-result-$code')), status);
       }
-      expect(
-        find.text(
-          'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
-        ),
-        findsOneWidget,
-      );
       expect(find.text('1 EUR = 160,0000 JPY'), findsOneWidget);
-      expect(find.textContaining('За 4 сентября'), findsNWidgets(2));
+      expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
     }
     await tester.enterText(find.byKey(const Key('amount-field')), '0');
     await tester.pump();
@@ -726,7 +718,7 @@ void main() {
     expect(_rowCodes(tester), ['CZK', 'GBP']);
     expect(_text(tester, const Key('conversion-result-CZK')), '25,00 CZK');
     expect(_text(tester, const Key('reverse-result-GBP')), '1,25 EUR');
-    expect(find.textContaining('За 4 сентября'), findsNWidgets(2));
+    expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
     expect(find.text('Повторить'), findsNothing);
   });
 
@@ -891,7 +883,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(_text(tester, const Key('conversion-result-CZK')), '250,00 CZK');
     expect(_text(tester, const Key('reverse-result-CZK')), '0,40 EUR');
-    expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
+    expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
     expect(find.textContaining('Показаны предыдущие курсы'), findsOneWidget);
     expect(_rowCodes(tester), ['CZK', 'USD', 'GBP']);
     await _srMove(tester, 'CZK', 1);
@@ -1031,7 +1023,7 @@ void main() {
       expect(store.value?.amount, '100');
       expect(callsBeforeTyping, 1);
       expect(rateCalls, callsBeforeTyping);
-      expect(find.textContaining('За 4 сентября'), findsNWidgets(3));
+      expect(find.textContaining('Курсы за 4 сентября'), findsOneWidget);
       expect(find.textContaining('Источник: Frankfurter'), findsOneWidget);
     },
   );
@@ -1444,7 +1436,6 @@ void main() {
       _text(tester, const Key('conversion-result-CZK')),
       '25 000 000 000 000,00 CZK',
     );
-    expect(find.text('EUR → CZK', skipOffstage: false), findsOneWidget);
     expect(find.text('CZK → EUR', skipOffstage: false), findsOneWidget);
     expect(
       _text(tester, const Key('reverse-result-CZK')),
@@ -2019,40 +2010,124 @@ void main() {
       expect(rect.left, greaterThan(titleRect.left), reason: key);
       expect(rect.right, lessThanOrEqualTo(375), reason: key);
     }
-    expect(tester.widget<Text>(title).style?.fontSize, 32);
+    expect(tester.widget<Text>(title).style?.fontSize, 20);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('компактная строка: удаление рядом с кодом, результаты рядом', (
+  testWidgets('общая дата одна над таблицей, разные даты — в строках', (
     tester,
   ) async {
-    tester.view.physicalSize = const Size(375, 1000);
+    var mixed = false;
+    await _pump(tester, (r) async {
+      if (r.url.path.endsWith('/currencies')) return _catalog();
+      if (!mixed) return _rates(r);
+      return http.Response(
+        jsonEncode([
+          for (final (quote, date) in [
+            ('USD', '2026-09-04'),
+            ('CZK', '2026-09-03'),
+            ('GBP', '2026-09-04'),
+          ])
+            {'date': date, 'base': 'EUR', 'quote': quote, 'rate': 2.0},
+        ]),
+        200,
+      );
+    });
+    expect(find.byKey(const Key('rates-date')), findsOneWidget);
+    expect(find.textContaining('За '), findsNothing);
+
+    mixed = true;
+    await tester.tap(find.byKey(const Key('refresh-button')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('rates-date')), findsNothing);
+    expect(find.textContaining('За 4 сентября'), findsNWidgets(2));
+    expect(find.textContaining('За 3 сентября'), findsOneWidget);
+  });
+
+  testWidgets('на телефоне текст строки крупнее, результаты одного размера', (
+    tester,
+  ) async {
     tester.view.devicePixelRatio = 1;
     addTearDown(tester.view.resetPhysicalSize);
     addTearDown(tester.view.resetDevicePixelRatio);
-    await _pump(
-      tester,
-      (r) async => r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
-    );
-
-    final code = tester.getRect(
-      find.descendant(
-        of: find.byKey(const Key('rate-row-USD')),
-        matching: find.text('USD'),
-      ),
-    );
-    final remove = tester.getRect(find.byKey(const Key('remove-USD')));
-    expect(remove.top, lessThan(code.bottom));
-    expect(remove.bottom, greaterThan(code.top));
-
-    final forward = tester.getRect(
-      find.byKey(const Key('conversion-result-USD')),
-    );
-    final reverse = tester.getRect(find.byKey(const Key('reverse-result-USD')));
-    expect(reverse.top, forward.top);
-    expect(reverse.left, greaterThan(forward.left));
-    expect(tester.takeException(), isNull);
+    double? size(Finder finder) => tester
+        .widget<Text>(
+          find.descendant(
+            of: find.byKey(const Key('rate-row-USD')),
+            matching: finder,
+          ),
+        )
+        .style
+        ?.fontSize;
+    for (final (width, forward, code, reverse, small) in [
+      (375.0, 24.0, 21.0, 24.0, 19.0),
+      (1200.0, 20.0, 17.0, 20.0, 17.0),
+    ]) {
+      tester.view.physicalSize = Size(width, 1000);
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+      );
+      expect(size(find.byKey(const Key('conversion-result-USD'))), forward);
+      expect(size(find.byKey(const Key('reverse-result-USD'))), reverse);
+      // Результаты одного размера, прямой — жирнее обратного.
+      FontWeight? weight(String key) =>
+          tester.widget<Text>(find.byKey(Key(key))).style?.fontWeight;
+      expect(
+        weight('conversion-result-USD')!.value,
+        greaterThan(weight('reverse-result-USD')?.value ?? 400),
+      );
+      expect(size(find.text('USD')), code);
+      // Курс в широкой таблице — 17 px, название — 15 px, как раньше.
+      expect(size(find.byKey(const Key('rate-USD'))), small);
+      expect(size(find.text('US Dollar')), width < 600 ? 19 : 15);
+      if (width < 600) expect(size(find.text('USD → EUR')), 19);
+      expect(tester.takeException(), isNull);
+    }
   });
+
+  testWidgets(
+    'компактная строка: обратный результат под прямым, левее крестика',
+    (tester) async {
+      tester.view.physicalSize = const Size(375, 1000);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await _pump(
+        tester,
+        (r) async =>
+            r.url.path.endsWith('/currencies') ? _catalog() : _rates(r),
+      );
+
+      final code = tester.getRect(
+        find.descendant(
+          of: find.byKey(const Key('rate-row-USD')),
+          matching: find.text('USD'),
+        ),
+      );
+      final remove = tester.getRect(find.byKey(const Key('remove-USD')));
+      final row = tester.getRect(find.byKey(const Key('rate-row-USD')));
+      expect(remove.top, greaterThanOrEqualTo(row.top));
+      expect(remove.bottom, lessThanOrEqualTo(row.bottom));
+
+      final forward = tester.getRect(
+        find.byKey(const Key('conversion-result-USD')),
+      );
+      final reverse = tester.getRect(
+        find.byKey(const Key('reverse-result-USD')),
+      );
+      // Прямой результат — в линии с кодом либо (не поместился) сразу под
+      // ним; обратный — ниже прямого, оба левее крестика. Тестовый шрифт
+      // шире настоящего, поэтому «строго в одну линию» не проверяем.
+      expect(forward.top, greaterThanOrEqualTo(code.top));
+      expect(forward.top, lessThanOrEqualTo(code.bottom));
+      expect(reverse.top, greaterThanOrEqualTo(forward.bottom));
+      expect(forward.right, lessThanOrEqualTo(remove.left));
+      expect(reverse.right, lessThanOrEqualTo(remove.left));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }
 
 List<String> _rowCodes(WidgetTester tester) => tester

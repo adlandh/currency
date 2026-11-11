@@ -311,9 +311,9 @@ class _CurrencyPageState extends State<CurrencyPage> {
                                     text: _preferencesNotice!,
                                   ),
                                 ),
-                                const SizedBox(height: 32),
+                                const SizedBox(height: 24),
                               ] else
-                                const SizedBox(height: 40),
+                                const SizedBox(height: 24),
                               if (_catalogLoading)
                                 const _CatalogLoading()
                               else if (_catalogError != null)
@@ -353,7 +353,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
       ThemePreference.light => 'Светлая',
       ThemePreference.dark => 'Тёмная',
     };
-    final title = Theme.of(context).textTheme.displaySmall;
+    // Заголовок — подпись: главный элемент страницы — сумма.
+    final title = Theme.of(context).textTheme.headlineSmall;
     // Иконки всегда в строке заголовка: Wrap уносил переключатель темы
     // на отдельную строку на телефоне.
     return Row(
@@ -362,7 +363,7 @@ class _CurrencyPageState extends State<CurrencyPage> {
           child: Text(
             'Курсы валют',
             style: MediaQuery.sizeOf(context).width < 600
-                ? title?.copyWith(fontSize: 32, letterSpacing: -0.9)
+                ? title?.copyWith(fontSize: 20, letterSpacing: -0.2)
                 : title,
           ),
         ),
@@ -438,9 +439,18 @@ class _CurrencyPageState extends State<CurrencyPage> {
 
   List<Widget> _buildRates(BuildContext context) {
     final amount = parseAmount(_amountController.text);
+    final colors = Theme.of(context).colorScheme;
     final surface = Theme.of(context).brightness == Brightness.dark
-        ? Theme.of(context).colorScheme.surfaceContainerLow
-        : Theme.of(context).colorScheme.surface;
+        ? colors.surfaceContainerLow
+        : colors.surface;
+    // Общая дата показывается один раз под суммой; при разных датах
+    // публикации каждая строка показывает свою.
+    final dates = {for (final rate in _tableRates.values) rate.date};
+    final commonDate = dates.length == 1 ? dates.single : null;
+    UnderlineInputBorder underline(Color color, double width) =>
+        UnderlineInputBorder(
+          borderSide: BorderSide(color: color, width: width),
+        );
     return [
       SliverToBoxAdapter(
         child: Column(
@@ -453,13 +463,22 @@ class _CurrencyPageState extends State<CurrencyPage> {
                 decimal: true,
               ),
               textInputAction: TextInputAction.done,
-              style: const TextStyle(
-                fontSize: 17,
-                fontFeatures: [FontFeature.tabularFigures()],
+              style: TextStyle(
+                fontSize: MediaQuery.sizeOf(context).width < 600 ? 34 : 40,
+                height: 1.15,
+                fontWeight: FontWeight.w600,
+                letterSpacing: -1,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
               decoration: InputDecoration(
                 labelText: 'Сумма',
+                floatingLabelBehavior: FloatingLabelBehavior.always,
                 hintText: 'Например, 3 000,50',
+                hintStyle: const TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w400,
+                  letterSpacing: 0,
+                ),
                 helperText: amount.status == AmountStatus.empty
                     ? 'Введите сумму'
                     : null,
@@ -467,6 +486,33 @@ class _CurrencyPageState extends State<CurrencyPage> {
                     ? amount.error
                     : null,
                 errorMaxLines: 3,
+                filled: false,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                border: underline(colors.primary, 2),
+                enabledBorder: underline(colors.primary, 2),
+                focusedBorder: underline(colors.primary, 3),
+                errorBorder: underline(colors.error, 2),
+                focusedErrorBorder: underline(colors.error, 3),
+                suffixIconConstraints: const BoxConstraints(),
+                suffixIcon: Container(
+                  margin: const EdgeInsets.only(left: 12),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: colors.secondaryContainer,
+                    borderRadius: BorderRadius.circular(6),
+                  ),
+                  child: Text(
+                    _base,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onSecondaryContainer,
+                    ),
+                  ),
+                ),
               ),
               onChanged: (_) {
                 setState(() {});
@@ -476,135 +522,172 @@ class _CurrencyPageState extends State<CurrencyPage> {
                 }
               },
             ),
-            const SizedBox(height: 16),
-            const Text(
-              'Одна сумма для обоих направлений: из EUR в валюту строки и обратно',
-            ),
+            if (commonDate != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Курсы за ${DateFormat.yMMMMd('ru_RU').format(commonDate)}',
+                key: const Key('rates-date'),
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
             const SizedBox(height: 24),
             if (_tableError != null) ...[
               _FailureBanner(message: _tableError!, onRetry: _loadTableRates),
               const SizedBox(height: 16),
             ],
-            if (_targets.isEmpty) const _EmptyRates(),
           ],
         ),
       ),
-      if (_targets.isNotEmpty)
-        SliverLayoutBuilder(
-          builder: (context, constraints) {
-            final compact =
-                constraints.crossAxisExtent < 900 ||
-                MediaQuery.textScalerOf(context).scale(17) > 25;
-            return SliverSemantics(
-              key: const Key('conversion-semantics'),
-              liveRegion: true,
-              container: true,
-              explicitChildNodes: true,
-              sliver: DecoratedSliver(
-                decoration: BoxDecoration(
-                  color: surface,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(
-                    color: Theme.of(context).colorScheme.outlineVariant,
-                  ),
-                ),
-                sliver: SliverPadding(
-                  // Отступ под рамку, как у Container с BoxDecoration.
-                  padding: const EdgeInsets.all(1),
-                  sliver: FocusTraversalGroup(
-                    policy: ReadingOrderTraversalPolicy(),
-                    child: SliverMainAxisGroup(
-                      slivers: [
-                        if (!compact)
-                          SliverToBoxAdapter(
-                            child: Column(
-                              children: [
-                                const Padding(
-                                  padding: EdgeInsets.fromLTRB(20, 16, 12, 16),
-                                  child: Row(
-                                    children: [
-                                      Expanded(flex: 3, child: Text('Валюта')),
-                                      SizedBox(width: 20),
-                                      Expanded(flex: 4, child: Text('Курс')),
-                                      SizedBox(width: 20),
-                                      Expanded(
-                                        flex: 3,
-                                        child: Text(
-                                          'EUR → валюта',
-                                          textAlign: TextAlign.right,
-                                        ),
-                                      ),
-                                      SizedBox(width: 20),
-                                      Expanded(
-                                        flex: 3,
-                                        child: Text(
-                                          'Валюта → EUR',
-                                          textAlign: TextAlign.right,
-                                        ),
-                                      ),
-                                      SizedBox(width: 56),
-                                    ],
-                                  ),
-                                ),
-                                const Divider(height: 1),
-                              ],
-                            ),
-                          ),
-                        SliverReorderableList(
-                          itemCount: _targets.length,
-                          onReorderItem: _reorderTarget,
-                          proxyDecorator: (child, _, _) => Material(
-                            elevation: 6,
-                            color: surface,
-                            child: child,
-                          ),
-                          itemBuilder: (context, index) {
-                            final code = _targets[index];
-                            return _RowDragListener(
-                              key: Key('rate-row-$code'),
-                              index: index,
-                              // DecoratedSliver не обрезает детей: тень и фон
-                              // наведения обрезаются только по краям рамки.
-                              child: ClipRRect(
-                                clipper: _TableEdgeClipper(
-                                  top: compact && index == 0,
-                                  bottom: index == _targets.length - 1,
-                                ),
+      SliverLayoutBuilder(
+        builder: (context, constraints) {
+          final compact =
+              constraints.crossAxisExtent < 900 ||
+              MediaQuery.textScalerOf(context).scale(17) > 25;
+          return DecoratedSliver(
+            decoration: BoxDecoration(
+              color: surface,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: colors.outlineVariant),
+            ),
+            sliver: SliverPadding(
+              // Отступ под рамку, как у Container с BoxDecoration.
+              padding: const EdgeInsets.all(1),
+              sliver: SliverMainAxisGroup(
+                slivers: [
+                  if (_targets.isNotEmpty)
+                    SliverSemantics(
+                      key: const Key('conversion-semantics'),
+                      liveRegion: true,
+                      container: true,
+                      explicitChildNodes: true,
+                      sliver: FocusTraversalGroup(
+                        policy: ReadingOrderTraversalPolicy(),
+                        child: SliverMainAxisGroup(
+                          slivers: [
+                            if (!compact)
+                              SliverToBoxAdapter(
                                 child: Column(
                                   children: [
-                                    RateRow(
-                                      currency: _currency(code)!,
-                                      base: _base,
-                                      rate: _tableRates[code],
-                                      identity: code == _base,
-                                      missing: _missingTableRates.contains(
-                                        code,
+                                    const Padding(
+                                      padding: EdgeInsets.fromLTRB(
+                                        20,
+                                        16,
+                                        12,
+                                        16,
                                       ),
-                                      loading: _tableLoading,
-                                      amount: amount,
-                                      compact: compact,
-                                      onRemove: () => _removeTarget(code),
+                                      child: Row(
+                                        children: [
+                                          Expanded(
+                                            flex: 3,
+                                            child: Text('Валюта'),
+                                          ),
+                                          SizedBox(width: 20),
+                                          Expanded(
+                                            flex: 4,
+                                            child: Text('Курс'),
+                                          ),
+                                          SizedBox(width: 20),
+                                          Expanded(
+                                            flex: 3,
+                                            child: Text(
+                                              'EUR → валюта',
+                                              textAlign: TextAlign.right,
+                                            ),
+                                          ),
+                                          SizedBox(width: 20),
+                                          Expanded(
+                                            flex: 3,
+                                            child: Text(
+                                              'Валюта → EUR',
+                                              textAlign: TextAlign.right,
+                                            ),
+                                          ),
+                                          SizedBox(width: 56),
+                                        ],
+                                      ),
                                     ),
-                                    if (index != _targets.length - 1)
-                                      const Divider(
-                                        height: 1,
-                                        indent: 20,
-                                        endIndent: 20,
-                                      ),
+                                    const Divider(height: 1),
                                   ],
                                 ),
                               ),
-                            );
-                          },
+                            SliverReorderableList(
+                              itemCount: _targets.length,
+                              onReorderItem: _reorderTarget,
+                              proxyDecorator: (child, _, _) => Material(
+                                elevation: 6,
+                                color: surface,
+                                child: child,
+                              ),
+                              itemBuilder: (context, index) {
+                                final code = _targets[index];
+                                return _RowDragListener(
+                                  key: Key('rate-row-$code'),
+                                  index: index,
+                                  // DecoratedSliver не обрезает детей: тень и фон
+                                  // наведения обрезаются только по краям рамки.
+                                  child: ClipRRect(
+                                    clipper: _TableEdgeClipper(
+                                      top: compact && index == 0,
+                                    ),
+                                    child: Column(
+                                      children: [
+                                        RateRow(
+                                          currency: _currency(code)!,
+                                          base: _base,
+                                          rate: _tableRates[code],
+                                          identity: code == _base,
+                                          missing: _missingTableRates.contains(
+                                            code,
+                                          ),
+                                          loading: _tableLoading,
+                                          amount: amount,
+                                          compact: compact,
+                                          showDate: commonDate == null,
+                                          onRemove: () => _removeTarget(code),
+                                        ),
+                                        const Divider(
+                                          height: 1,
+                                          indent: 20,
+                                          endIndent: 20,
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  // Добавление — последняя строка таблицы.
+                  SliverToBoxAdapter(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        if (_targets.isEmpty) ...[
+                          const _EmptyRates(),
+                          const Divider(height: 1, indent: 20, endIndent: 20),
+                        ],
+                        CurrencyMenu(
+                          key: ValueKey(
+                            'add-$_addMenuVersion-${_currencies.length}',
+                          ),
+                          fieldKey: const Key('add-target-menu'),
+                          label: 'Добавить валюту',
+                          currencies: _currencies,
+                          disabledCodes: _targets.toSet(),
+                          onSelected: _addTarget,
                         ),
                       ],
                     ),
                   ),
-                ),
+                ],
               ),
-            );
-          },
-        ),
+            ),
+          );
+        },
+      ),
       SliverToBoxAdapter(
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -616,17 +699,8 @@ class _CurrencyPageState extends State<CurrencyPage> {
                 text: 'Не удалось обновить. Показаны предыдущие курсы.',
               ),
             ],
-            const SizedBox(height: 24),
-            CurrencyMenu(
-              key: ValueKey('add-$_addMenuVersion-${_currencies.length}'),
-              fieldKey: const Key('add-target-menu'),
-              label: 'Добавить валюту',
-              currencies: _currencies,
-              disabledCodes: _targets.toSet(),
-              onSelected: _addTarget,
-            ),
             if (_targets.length == _currencies.length) ...[
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               const Text('Все валюты уже добавлены.'),
             ],
             const SizedBox(height: 18),
@@ -670,8 +744,26 @@ class CurrencyMenu extends StatelessWidget {
           enableSearch: true,
           requestFocusOnTap: true,
           menuHeight: 360,
-          leadingIcon: const Icon(Icons.search_rounded, size: 20),
-          inputDecorationTheme: Theme.of(context).inputDecorationTheme,
+          leadingIcon: Icon(
+            Icons.add_rounded,
+            size: 20,
+            color: Theme.of(context).colorScheme.primary,
+          ),
+          // Без рамки: поле — строка таблицы, рамку даёт сама таблица.
+          inputDecorationTheme: InputDecorationTheme(
+            filled: false,
+            border: InputBorder.none,
+            enabledBorder: InputBorder.none,
+            focusedBorder: InputBorder.none,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 20,
+              vertical: 16,
+            ),
+            labelStyle: TextStyle(
+              color: Theme.of(context).colorScheme.primary,
+              fontWeight: FontWeight.w500,
+            ),
+          ),
           dropdownMenuEntries: currencies
               .map(
                 (currency) => DropdownMenuEntry(
@@ -688,34 +780,31 @@ class CurrencyMenu extends StatelessWidget {
   }
 }
 
-/// Обрезает строку по бокам рамки таблицы, а сверху и снизу — только если
-/// строка у края таблицы (со скруглением). Между строками тень наведения
-/// и подъём на 1 px остаются видны поверх соседей.
+/// Обрезает строку по бокам рамки таблицы, а сверху — только у первой
+/// строки без шапки (со скруглением). Между строками тень наведения
+/// и подъём на 1 px остаются видны поверх соседей; снизу таблицу
+/// замыкает строка добавления, поэтому низ не обрезается.
 class _TableEdgeClipper extends CustomClipper<RRect> {
-  const _TableEdgeClipper({required this.top, required this.bottom});
+  const _TableEdgeClipper({required this.top});
 
   /// Запас под тень наведения (blur 10 + сдвиг 3).
   static const _overflow = 20.0;
-  static const _radius = Radius.circular(9); // 10 у рамки минус 1 px толщины.
+  static const _radius = Radius.circular(11); // 12 у рамки минус 1 px толщины.
 
   final bool top;
-  final bool bottom;
 
   @override
   RRect getClip(Size size) => RRect.fromLTRBAndCorners(
     0,
     top ? 0 : -_overflow,
     size.width,
-    bottom ? size.height : size.height + _overflow,
+    size.height + _overflow,
     topLeft: top ? _radius : Radius.zero,
     topRight: top ? _radius : Radius.zero,
-    bottomLeft: bottom ? _radius : Radius.zero,
-    bottomRight: bottom ? _radius : Radius.zero,
   );
 
   @override
-  bool shouldReclip(_TableEdgeClipper old) =>
-      old.top != top || old.bottom != bottom;
+  bool shouldReclip(_TableEdgeClipper old) => old.top != top;
 }
 
 /// Начинает перетаскивание строки: мышью — сразу при движении с зажатой
@@ -753,9 +842,12 @@ class RateRow extends StatefulWidget {
     required this.loading,
     required this.amount,
     required this.compact,
+    this.showDate = true,
     required this.onRemove,
   });
 
+  /// Показывать дату курса в строке (когда нет общей даты над таблицей).
+  final bool showDate;
   final CurrencyInfo currency;
   final String base;
   final ExchangeRate? rate;
@@ -806,83 +898,87 @@ class _RateRowState extends State<RateRow> {
                 ]
               : const [],
         ),
-        padding: const EdgeInsets.fromLTRB(20, 18, 12, 18),
+        padding: widget.compact
+            ? const EdgeInsets.fromLTRB(20, 14, 4, 14)
+            : const EdgeInsets.fromLTRB(20, 18, 12, 18),
         child: _content(context),
       ),
     );
   }
 
+  /// На телефоне текст строки крупнее (+4 px), чтобы читался без очков;
+  /// широкая таблица остаётся с размерами темы.
+  TextStyle? _sized(TextStyle? style, double compactSize) =>
+      widget.compact ? style?.copyWith(fontSize: compactSize) : style;
+
   Widget _content(BuildContext context) {
     final details = _details(context);
-    final name = Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          widget.currency.code,
-          style: Theme.of(context).textTheme.titleMedium,
-        ),
-        const SizedBox(height: 2),
-        Text(
-          widget.currency.name,
-          style: Theme.of(context).textTheme.bodyMedium,
-        ),
-      ],
+    final colors = Theme.of(context).colorScheme;
+    final muted = _sized(Theme.of(context).textTheme.bodyMedium, 19);
+    final code = Text(
+      widget.currency.code,
+      style: _sized(Theme.of(context).textTheme.titleMedium, 21),
     );
+    final currencyName = Text(widget.currency.name, style: muted);
     final actions = SizedBox.square(
       dimension: 48,
       child: IconButton(
         key: Key('remove-${widget.currency.code}'),
         onPressed: widget.onRemove,
         tooltip: 'Удалить ${widget.currency.code}',
-        color: Theme.of(context).colorScheme.error,
+        // Тихий крестик: красным становится только под указателем и в фокусе.
+        style: ButtonStyle(
+          foregroundColor: WidgetStateProperty.resolveWith(
+            (states) =>
+                states.contains(WidgetState.hovered) ||
+                    states.contains(WidgetState.focused)
+                ? colors.error
+                : colors.onSurfaceVariant,
+          ),
+        ),
         icon: const Icon(Icons.close_rounded, size: 20),
       ),
     );
     if (widget.compact) {
-      // Крестик рядом с названием, обе суммы в одну строку: карточка
-      // на телефоне вдвое ниже прежней колонки из пяти блоков.
-      Widget labelled(String label, Widget value) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.bodyMedium),
-          const SizedBox(height: 2),
-          value,
-        ],
+      // Главное — сумма в валюте строки; обратный пересчёт и курс — тише.
+      // Подпись направления стоит в одной линии со своей суммой, чтобы
+      // при переносе они не разъезжались. Wrap роняет правую часть на
+      // свою линию, когда пара не помещается (длинная сумма, крупный
+      // текст), — без переполнения.
+      Widget line(Widget left, Widget right) => Wrap(
+        alignment: WrapAlignment.spaceBetween,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        spacing: 12,
+        children: [left, right],
       );
-      return Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      return Row(
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: name),
-              actions,
-            ],
-          ),
-          const SizedBox(height: 12),
-          labelled('Курс', details),
-          const SizedBox(height: 12),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: labelled(
-                  '${widget.base} → ${widget.currency.code}',
-                  _result(context),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: labelled(
-                  '${widget.currency.code} → ${widget.base}',
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                line(code, _result(context)),
+                currencyName,
+                details,
+                const SizedBox(height: 4),
+                line(
+                  Text(
+                    '${widget.currency.code} → ${widget.base}',
+                    style: muted,
+                  ),
                   _result(context, reverse: true),
                 ),
-              ),
-            ],
+              ],
+            ),
           ),
+          actions,
         ],
       );
     }
+    final name = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [code, const SizedBox(height: 2), currencyName],
+    );
     return Row(
       children: [
         Expanded(flex: 3, child: name),
@@ -927,9 +1023,18 @@ class _RateRowState extends State<RateRow> {
         '${reverse ? 'reverse' : 'conversion'}-result-${widget.currency.code}',
       ),
       semanticsLabel: 'Результат конвертации $from → $to: $result',
-      textAlign: widget.compact ? TextAlign.left : TextAlign.right,
-      style: Theme.of(context).textTheme.titleMedium
-          ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+      textAlign: TextAlign.right,
+      // Оба результата одного размера; прямой выделен полужирным,
+      // обратный — обычным начертанием.
+      style:
+          (reverse
+                  ? Theme.of(context).textTheme.bodyLarge
+                  : Theme.of(context).textTheme.titleMedium)
+              ?.copyWith(
+                fontSize: widget.compact ? 24 : 20,
+                letterSpacing: -0.3,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
     );
   }
 
@@ -940,27 +1045,29 @@ class _RateRowState extends State<RateRow> {
         : widget.loading && !widget.missing
         ? 'Загрузка курса…'
         : 'Курс недоступен';
+    final muted = _sized(Theme.of(context).textTheme.bodyMedium, 19);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
           value,
-          style: Theme.of(context).textTheme.titleMedium
-              ?.copyWith(fontFeatures: const [FontFeature.tabularFigures()]),
+          key: Key('rate-${widget.currency.code}'),
+          style:
+              (widget.compact ? muted : Theme.of(context).textTheme.bodyLarge)
+                  ?.copyWith(
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
         ),
-        if (!widget.identity && widget.rate != null) ...[
+        if (!widget.identity && widget.rate != null && widget.showDate) ...[
           const SizedBox(height: 4),
           Text(
             'За ${DateFormat.yMMMMd('ru_RU').format(widget.rate!.date)}',
-            style: Theme.of(context).textTheme.bodyMedium,
+            style: muted,
           ),
         ],
         if (widget.identity) ...[
           const SizedBox(height: 4),
-          Text(
-            'Тождественный курс',
-            style: Theme.of(context).textTheme.bodyMedium,
-          ),
+          Text('Тождественный курс', style: muted),
         ],
       ],
     );
@@ -1053,13 +1160,10 @@ class _EmptyRates extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // Рамку даёт таблица: пустое состояние — её первая строка.
+    return Padding(
       key: const Key('empty-rates'),
-      decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 20),
       child: Row(
         children: [
           Icon(

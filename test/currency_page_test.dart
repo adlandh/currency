@@ -2060,7 +2060,7 @@ void main() {
         .style
         ?.fontSize;
     for (final (width, forward, code, reverse, small) in [
-      (375.0, 24.0, 21.0, 24.0, 19.0),
+      (375.0, 34.0, 21.0, 34.0, 19.0),
       (1200.0, 20.0, 17.0, 20.0, 17.0),
     ]) {
       tester.view.physicalSize = Size(width, 1000);
@@ -2082,7 +2082,17 @@ void main() {
       // Курс в широкой таблице — 17 px, название — 15 px, как раньше.
       expect(size(find.byKey(const Key('rate-USD'))), small);
       expect(size(find.text('US Dollar')), width < 600 ? 19 : 15);
-      if (width < 600) expect(size(find.text('USD → EUR')), 19);
+      if (width < 600) {
+        expect(size(find.text('USD → EUR')), 19);
+        // Результат того же размера, что и текст поля «Сумма».
+        expect(
+          tester
+              .widget<TextField>(find.byKey(const Key('amount-field')))
+              .style
+              ?.fontSize,
+          forward,
+        );
+      }
       expect(tester.takeException(), isNull);
     }
   });

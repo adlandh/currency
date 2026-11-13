@@ -1024,6 +1024,11 @@ class _RateRowState extends State<RateRow> {
       ),
       semanticsLabel: 'Результат конвертации $from → $to: $result',
       textAlign: TextAlign.right,
+      // ponytail: при крупном системном тексте результат растёт не выше
+      // прежних 48 px (24 px × 200%), иначе строка на 360 px выше экрана.
+      textScaler: widget.compact
+          ? MediaQuery.textScalerOf(context).clamp(maxScaleFactor: 48 / 34)
+          : null,
       // Оба результата одного размера; прямой выделен полужирным,
       // обратный — обычным начертанием.
       style:
@@ -1031,7 +1036,7 @@ class _RateRowState extends State<RateRow> {
                   ? Theme.of(context).textTheme.bodyLarge
                   : Theme.of(context).textTheme.titleMedium)
               ?.copyWith(
-                fontSize: widget.compact ? 24 : 20,
+                fontSize: widget.compact ? 34 : 20,
                 letterSpacing: -0.3,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
